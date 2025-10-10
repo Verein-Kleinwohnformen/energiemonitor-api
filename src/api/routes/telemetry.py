@@ -22,7 +22,9 @@ def store_telemetry(device_id):
     """
     Store telemetry data from a device
     
-    Expected payload format (from NodeRED):
+    Accepts both single objects and arrays of objects.
+    
+    Single object format:
     {
         "values": {
             "voltage": 231.27,
@@ -33,6 +35,12 @@ def store_telemetry(device_id):
         "timestamp": 1760084970005,
         "metering_point": "E1"
     }
+    
+    Array format (from NodeRED batch upload):
+    [
+        { "values": {...}, "sensor_id": "...", "timestamp": ..., "metering_point": "..." },
+        { "values": {...}, "sensor_id": "...", "timestamp": ..., "metering_point": "..." }
+    ]
     """
     try:
         # Log incoming request
@@ -41,42 +49,75 @@ def store_telemetry(device_id):
         
         data = request.get_json()
         
-        # Log the raw payload
-        logger.info(f"Device {device_id} payload: {data}")
+        # Log the raw payload (truncated if too large)
+        if isinstance(data, list):
+            logger.info(f"Device {device_id}: Received batch with {len(data)} records")
+        else:
+            logger.info(f"Device {device_id} payload: {data}")
         
         if not data:
             logger.warning(f"Device {device_id}: No data provided in request")
             return jsonify({'error': 'No data provided'}), 400
         
-        # Validate the telemetry data structure
-        is_valid, error_message = validate_telemetry_data(data)
-        if not is_valid:
-            logger.error(f"Device {device_id}: Validation failed - {error_message}")
-            logger.debug(f"Invalid data structure: {data}")
-            return jsonify({'error': f'Invalid data format: {error_message}'}), 400
+        # Handle both single objects and arrays
+        records = data if isinstance(data, list) else [data]
         
-        logger.info(f"Device {device_id}: Validation passed for sensor {data.get('sensor_id')} at metering point {data.get('metering_point')}")
+        stored_count = 0
+        failed_count = 0
+        errors = []
         
-        # Add server timestamp if not present
-        if 'timestamp' not in data:
-            data['timestamp'] = int(datetime.now().timestamp() * 1000)
-            logger.debug(f"Device {device_id}: Added server timestamp {data['timestamp']}")
+        for idx, record in enumerate(records):
+            # Validate the telemetry data structure
+            is_valid, error_message = validate_telemetry_data(record)
+            if not is_valid:
+                logger.error(f"Device {device_id}: Record {idx} validation failed - {error_message}")
+                failed_count += 1
+                errors.append(f"Record {idx}: {error_message}")
+                continue
+            
+            logger.debug(f"Device {device_id}: Record {idx} validation passed for sensor {record.get('sensor_id')} at metering point {record.get('metering_point')}")
+            
+            # Add server timestamp if not present
+            if 'timestamp' not in record:
+                record['timestamp'] = int(datetime.now().timestamp() * 1000)
+                logger.debug(f"Device {device_id}: Added server timestamp {record['timestamp']}")
+            
+            # Store the data in Firebase
+            success, message = firebase_service.store_telemetry(device_id, record)
+            
+            if success:
+                stored_count += 1
+                logger.debug(f"Device {device_id}: Record {idx} stored successfully - Sensor: {record.get('sensor_id')}, Timestamp: {record.get('timestamp')}")
+            else:
+                logger.error(f"Device {device_id}: Record {idx} failed to store - {message}")
+                failed_count += 1
+                errors.append(f"Record {idx}: {message}")
         
-        # Store the data in Firebase
-        logger.info(f"Device {device_id}: Storing data in Firestore...")
-        success, message = firebase_service.store_telemetry(device_id, data)
+        # Log summary
+        logger.info(f"Device {device_id}: Batch complete - Stored: {stored_count}, Failed: {failed_count}")
         
-        if success:
-            logger.info(f"Device {device_id}: Data stored successfully - Sensor: {data.get('sensor_id')}, Timestamp: {data.get('timestamp')}")
+        # Return appropriate response
+        if stored_count > 0 and failed_count == 0:
             return jsonify({
-                'message': 'Data stored successfully',
+                'message': 'All data stored successfully',
                 'device_id': device_id,
-                'sensor_id': data.get('sensor_id'),
-                'timestamp': data.get('timestamp')
+                'stored_count': stored_count
             }), 200
+        elif stored_count > 0 and failed_count > 0:
+            return jsonify({
+                'message': 'Partial success',
+                'device_id': device_id,
+                'stored_count': stored_count,
+                'failed_count': failed_count,
+                'errors': errors[:10]  # Limit to first 10 errors
+            }), 207  # Multi-Status
         else:
-            logger.error(f"Device {device_id}: Failed to store data - {message}")
-            return jsonify({'error': message}), 500
+            return jsonify({
+                'error': 'Failed to store data',
+                'device_id': device_id,
+                'failed_count': failed_count,
+                'errors': errors[:10]  # Limit to first 10 errors
+            }), 400
             
     except Exception as e:
         logger.exception(f"Device {device_id}: Unexpected error occurred: {str(e)}")
