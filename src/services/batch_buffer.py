@@ -211,8 +211,8 @@ class BatchBuffer:
         
         # Create document
         doc = {
-            'path': f'devices/{device_id}/telemetry/{year}/{month}/{day}',
-            'document_id': f'{sensor_id}_{metering_point}',  # Base ID, may need suffix if multiple batches
+            'path': f'devices/{device_id}/telemetry/{year}/{month}',
+            'document_id': f'{day}_{sensor_id}_{metering_point}',  # Include day in document ID
             'data': {
                 **buffer_entry['metadata'],
                 'data_points': buffer_entry['data_points'],

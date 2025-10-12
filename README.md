@@ -157,7 +157,7 @@ Exportiert Telemetriedaten als XLSX-Datei zum Download.
 
 **Service URL:**
 ```
-https://telemetry-api-325255315766.europe-west6.run.app
+https://energiemonitor-api-325255315766.europe-west6.run.app
 ```
 
 **Headers:**
@@ -171,10 +171,10 @@ https://telemetry-api-325255315766.europe-west6.run.app
 
 ```bash
 # Mit ISO-Datum
-GET https://telemetry-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31
+GET https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31
 
 # Mit Timestamp (Millisekunden)
-GET https://telemetry-api-325255315766.europe-west6.run.app/export?start_date=1727740800000&end_date=1730419199999
+GET https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=1727740800000&end_date=1730419199999
 
 # Mit PowerShell herunterladen
 $headers = @{
@@ -182,13 +182,13 @@ $headers = @{
 }
 
 Invoke-WebRequest `
-    -Uri "https://telemetry-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31" `
+    -Uri "https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31" `
     -Headers $headers `
     -OutFile "energiemonitor_export.xlsx"
 
 # Mit curl herunterladen
 curl -H "KWF-Device-Key: your-device-api-key" \
-     "https://telemetry-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31" \
+     "https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31" \
      -o energiemonitor_export.xlsx
 ```
 
@@ -290,7 +290,7 @@ POST /buffer/flush?date=2025-10-12
 ```powershell
 # API-Schlüssel und URL definieren
 $apiKey = "your-device-api-key"
-$baseUrl = "https://telemetry-api-325255315766.europe-west6.run.app"
+$baseUrl = "https://energiemonitor-api-325255315766.europe-west6.run.app"
 
 # Telemetriedaten senden
 $headers = @{
@@ -358,12 +358,12 @@ Write-Host "✓ Puffer geflusht: $($flushResponse.message)"
 
 | Endpoint | URL |
 |----------|-----|
-| **Produktion** | `https://telemetry-api-325255315766.europe-west6.run.app` |
-| Health Check | `https://telemetry-api-325255315766.europe-west6.run.app/health` |
-| Telemetrie POST | `https://telemetry-api-325255315766.europe-west6.run.app/telemetry` |
-| Export GET | `https://telemetry-api-325255315766.europe-west6.run.app/export` |
-| Pufferstatus GET | `https://telemetry-api-325255315766.europe-west6.run.app/buffer/stats` |
-| Puffer Flush POST | `https://telemetry-api-325255315766.europe-west6.run.app/buffer/flush` |
+| **Produktion** | `https://energiemonitor-api-325255315766.europe-west6.run.app` |
+| Health Check | `https://energiemonitor-api-325255315766.europe-west6.run.app/health` |
+| Telemetrie POST | `https://energiemonitor-api-325255315766.europe-west6.run.app/telemetry` |
+| Export GET | `https://energiemonitor-api-325255315766.europe-west6.run.app/export` |
+| Pufferstatus GET | `https://energiemonitor-api-325255315766.europe-west6.run.app/buffer/stats` |
+| Puffer Flush POST | `https://energiemonitor-api-325255315766.europe-west6.run.app/buffer/flush` |
 
 ### Geräte-API-Schlüssel
 

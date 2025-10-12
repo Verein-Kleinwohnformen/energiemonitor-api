@@ -1,7 +1,7 @@
 # Test script for XLSX export functionality
 # This script sends test data and downloads it as XLSX
 
-$baseUrl = "https://telemetry-api-325255315766.europe-west6.run.app"
+$baseUrl = "https://energiemonitor-api-325255315766.europe-west6.run.app"
 $apiKey = "testmon00_1234567890"
 $deviceId = "testmon00"
 
