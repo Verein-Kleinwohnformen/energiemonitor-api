@@ -34,12 +34,17 @@ def export_data(device_id):
         try:
             # Try parsing as ISO date first
             if 'T' in start_date or '-' in start_date:
-                start_ts = int(datetime.fromisoformat(start_date.replace('Z', '+00:00')).timestamp() * 1000)
+                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                start_ts = int(start_dt.timestamp() * 1000)
             else:
                 start_ts = int(start_date)
                 
             if 'T' in end_date or '-' in end_date:
-                end_ts = int(datetime.fromisoformat(end_date.replace('Z', '+00:00')).timestamp() * 1000)
+                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                # If end_date is just a date (no time component), set to end of day
+                if 'T' not in end_date:
+                    end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999000)
+                end_ts = int(end_dt.timestamp() * 1000)
             else:
                 end_ts = int(end_date)
         except ValueError as e:

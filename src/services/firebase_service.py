@@ -16,7 +16,7 @@ class FirebaseService:
     Handles all Firebase/Firestore operations with optimized batching.
     
     Firestore structure (OPTIMIZED):
-    /devices/{device_id}/telemetry/{year}/{month}/{day}/{sensor_id}_{metering_point}
+    /devices/{device_id}/telemetry/{year}/{month}/{day}_{sensor_id}_{metering_point}
     /devices/{device_id}/sensors/{sensor_id}
     /devices/{device_id}/metadata
     
@@ -97,6 +97,9 @@ class FirebaseService:
             Tuple of (success: bool, message: str)
         """
         try:
+            # Ensure device document exists (for Firestore console visibility)
+            self._ensure_device_document(device_id)
+            
             # Add data point to buffer
             should_flush, documents = self.batch_buffer.add_data_point(device_id, data)
             
@@ -228,6 +231,32 @@ class FirebaseService:
         except Exception as e:
             print(f"Warning: Failed to update sensor metadata: {e}")
     
+    def _ensure_device_document(self, device_id: str):
+        """
+        Ensure device document exists for Firestore console visibility.
+        Creates a minimal device document if it doesn't exist.
+        This makes subcollections (telemetry, sensors) visible in the console.
+        """
+        try:
+            device_ref = self.db.collection('devices').document(device_id)
+            doc = device_ref.get()
+            
+            if not doc.exists:
+                device_ref.set({
+                    'device_id': device_id,
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                    'last_seen': datetime.now(timezone.utc).isoformat()
+                })
+                logger.info(f"Created device document for {device_id}")
+            else:
+                # Update last_seen timestamp
+                device_ref.update({
+                    'last_seen': datetime.now(timezone.utc).isoformat()
+                })
+        except Exception as e:
+            # Don't fail if device document can't be created
+            logger.warning(f"Could not ensure device document for {device_id}: {e}")
+    
     def get_telemetry_data(self, 
                           device_id: str, 
                           start_timestamp: int, 
@@ -267,22 +296,28 @@ class FirebaseService:
                 month = f"{current_date.month:02d}"
                 day = f"{current_date.day:02d}"
                 
-                collection_path = f'devices/{device_id}/telemetry/{year}/{month}/{day}'
-                query = self.db.collection(collection_path)
+                collection_path = f'devices/{device_id}/telemetry/{year}/{month}'
+                collection_ref = self.db.collection(collection_path)
                 
-                # Filter by sensor if specified
-                if sensor_id:
-                    query = query.where('sensor_id', '==', sensor_id)
-                
-                # Filter by metering point if specified
-                if metering_point:
-                    query = query.where('metering_point', '==', metering_point)
-                
-                # Execute query
-                docs = query.stream()
+                # Get all documents from the collection
+                # We'll filter by day prefix in Python since Firestore document ID queries are complex
+                docs = collection_ref.stream()
                 
                 for doc in docs:
+                    # Filter by day prefix in document ID
+                    if not doc.id.startswith(f'{day}_'):
+                        continue
+                    
                     doc_data = doc.to_dict()
+                    
+                    # Filter by sensor if specified
+                    if sensor_id and doc_data.get('sensor_id') != sensor_id:
+                        continue
+                    
+                    # Filter by metering point if specified
+                    if metering_point and doc_data.get('metering_point') != metering_point:
+                        continue
+                    
                     data_points = doc_data.get('data_points', [])
                     
                     # Extract metadata for each point
