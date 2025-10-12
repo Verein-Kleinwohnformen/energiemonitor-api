@@ -53,7 +53,7 @@ gcloud run deploy energiemonitor-api `
 # Get the service URL
 $ServiceUrl = gcloud run services describe energiemonitor-api --region europe-west6 --format 'value(status.url)'
 
-Write-Host "`n✓ Deployment successful!" -ForegroundColor Green
+Write-Host "`n[SUCCESS] Deployment successful!" -ForegroundColor Green
 Write-Host "`nService URL: $ServiceUrl" -ForegroundColor Yellow
 Write-Host "`nEndpoints:"
 Write-Host "  - Health: $ServiceUrl/health" -ForegroundColor Yellow

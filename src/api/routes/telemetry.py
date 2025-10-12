@@ -122,3 +122,56 @@ def store_telemetry(device_id):
     except Exception as e:
         logger.exception(f"Device {device_id}: Unexpected error occurred: {str(e)}")
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+
+@telemetry_bp.route('/buffer/stats', methods=['GET'])
+def get_buffer_stats():
+    """
+    Get current buffer statistics (no authentication required for monitoring)
+    
+    Returns information about:
+    - Number of devices with buffered data
+    - Number of data points per device/sensor/date
+    - Total data points in buffer
+    """
+    try:
+        stats = firebase_service.get_buffer_stats()
+        return jsonify(stats), 200
+    except Exception as e:
+        logger.exception(f"Error getting buffer stats: {str(e)}")
+        return jsonify({'error': f'Failed to get buffer stats: {str(e)}'}), 500
+
+
+@telemetry_bp.route('/buffer/flush', methods=['POST'])
+@require_device_key
+def flush_buffer(device_id):
+    """
+    Manually flush the buffer for a specific device or date.
+    
+    Optional query parameters:
+    - date: Flush specific date (format: YYYY-MM-DD)
+    
+    If no date specified, flushes all buffered data for the device.
+    """
+    try:
+        date_str = request.args.get('date')
+        
+        success, message = firebase_service.flush_buffer(device_id, date_str)
+        
+        if success:
+            logger.info(f"Device {device_id}: Manual flush triggered - {message}")
+            return jsonify({
+                'message': message,
+                'device_id': device_id,
+                'date': date_str
+            }), 200
+        else:
+            logger.error(f"Device {device_id}: Flush failed - {message}")
+            return jsonify({
+                'error': message,
+                'device_id': device_id
+            }), 500
+            
+    except Exception as e:
+        logger.exception(f"Device {device_id}: Error during flush: {str(e)}")
+        return jsonify({'error': f'Failed to flush buffer: {str(e)}'}), 500
