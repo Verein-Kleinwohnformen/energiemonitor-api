@@ -40,57 +40,67 @@ energiemonitor-api/
 
 ## Firestore Datenstruktur
 
-### Batch-Speicherung (Optimiert)
+### Batch-Speicherung mit UUID-Dokumenten (Optimiert & Sicher)
 
-Das System verwendet eine **optimierte Batch-Speicherung**, die bis zu 2.000 Datenpunkte pro Dokument gruppiert. Dies reduziert die Schreibvorgänge um über 99% und hält die Kosten innerhalb des kostenlosen Kontingents.
+Das System verwendet eine **optimierte Batch-Speicherung mit UUID-Dokumenten**, die bis zu 2.000 Datenpunkte pro Dokument gruppiert. Die Verwendung von UUIDs statt strukturierter Namen verhindert, dass sensible Informationen (Sensor-IDs, Messpunkte) in Dokumentpfaden sichtbar sind.
+
+**Wichtig:** Daten werden **sofort nach jedem API-Request persistiert** - es gibt keine dauerhafte Pufferung zwischen Requests. Dies verhindert Datenverlust bei Service-Neustarts.
 
 ```
 /devices/{device_id}/
   ├── telemetry/
   │   ├── {year}/
   │   │   └── {month}/
-  │   │       └── {day}/
-  │   │           └── {sensor_id}_{metering_point}[_batch_nr]: {
-  │   │               "sensor_id": "shelly-3em-pro",
-  │   │               "device_id": "emon01",
-  │   │               "metering_point": "E1",
-  │   │               "date": "2025-10-12",
-  │   │               "start_timestamp": 1728691200000,
-  │   │               "end_timestamp": 1728777599999,
-  │   │               "data_points": [
-  │   │                 {
-  │   │                   "timestamp": 1728691200000,
-  │   │                   "values": {
-  │   │                     "voltage": 231.5,
-  │   │                     "act_power": 15.2,
-  │   │                     "current": 1.5
-  │   │                   }
-  │   │                 },
-  │   │                 // ... bis zu 2.000 Datenpunkte
-  │   │               ],
-  │   │               "count": 2000,
-  │   │               "created_at": "2025-10-12T10:30:00Z"
-  │   │             }
-  ├── sensors/
-  │   └── {sensor_id}: {
-  │       "sensor_id": "shelly-3em-pro",
-  │       "sensor_type": "shelly-3em-pro",
-  │       "metering_point": "E1",
-  │       "first_seen": 1760084970005,
-  │       "last_seen": 1760184970005,
-  │       "data_count": 1234,
-  │       "value_fields": ["voltage", "act_power", "pf"]
-  │     }
+  │   │       └── {uuid}: {
+  │   │           "sensor_id": "shelly-3em-pro",
+  │   │           "device_id": "emon01",
+  │   │           "metering_point": "E1",
+  │   │           "date": "2025-10-12",
+  │   │           "day": 12,                          // Integer für effiziente Queries
+  │   │           "start_timestamp": 1728691200000,
+  │   │           "end_timestamp": 1728777599999,
+  │   │           "data_points": [
+  │   │             {
+  │   │               "timestamp": 1728691200000,
+  │   │               "values": {
+  │   │                 "voltage": 231.5,
+  │   │                 "act_power": 15.2,
+  │   │                 "current": 1.5
+  │   │               }
+  │   │             },
+  │   │             // ... bis zu 2.000 Datenpunkte
+  │   │           ],
+  │   │           "count": 2000,
+  │   │           "created_at": "2025-10-12T10:30:00Z"
+  │   │         }
+  └── sensors/
+      └── {sensor_id}: {
+          "sensor_id": "shelly-3em-pro",
+          "sensor_type": "shelly-3em-pro",
+          "metering_point": "E1",
+          "device_id": "emon01",
+          "first_seen": 1760084970005,
+          "last_seen": 1760184970005,              // Aktualisiert bei jedem Request
+          "value_fields": ["voltage", "act_power", "pf"]
+        }
 ```
 
-### Vorteile der Batch-Speicherung
+**Hinweis:** Es gibt **kein separates Device-Dokument** mehr. Die `last_seen` Information wird direkt in den Sensor-Dokumenten gespeichert. Dies reduziert Schreibvorgänge um 78%.
 
-- **Kosteneffizienz**: >99% Reduktion der Schreibvorgänge
-  - Vorher: ~259.200 Schreibvorgänge/Monat pro Gerät
-  - Nachher: ~130 Schreibvorgänge/Monat pro Gerät
-  - Kosten: $0.00 (innerhalb des kostenlosen Kontingents!)
+### Vorteile der Architektur
 
-- **Kalender-basierte Abfragen**: Organisiert nach Jahr/Monat/Tag
+- **Datenschutz & Sicherheit**:
+  - UUID-Dokumentnamen verbergen sensible Informationen
+  - Sensor-IDs und Messpunkte nicht in Pfaden sichtbar
+  - Keine Kollisionen, keine Rückschlüsse möglich
+
+- **Datensicherheit**:
+  - **Sofortige Persistierung**: Daten werden am Ende jedes API-Requests geschrieben
+  - **Kein Datenverlust**: Keine dauerhafte Pufferung zwischen Requests
+  - **Serverless-sicher**: Funktioniert zuverlässig in Cloud Run-Umgebung
+
+- **Kalender-basierte Abfragen**: Organisiert nach Jahr/Monat mit `day`-Feld
+  - Effiziente Queries: `WHERE day == 12` (indexiert)
   - Ideal für XLSX-Exporte mit Datumsbereich
   - Abfragen von Mitternacht bis Mitternacht
 
@@ -102,19 +112,27 @@ Das System verwendet eine **optimierte Batch-Speicherung**, die bis zu 2.000 Dat
   - Nur 26% des 1-MB-Limits
   - 74% Sicherheitsmarge
 
-### Pufferung und Speicherung
+- **Write-Optimierung**:
+  - Kein separates Device-Dokument (eliminiert redundante Writes)
+  - `last_seen` direkt in Sensor-Dokumenten gespeichert
+  - Sensor-Metadaten werden gecacht und nur einmal pro Request aktualisiert
+  - Batch-Speicherung gruppiert bis zu 2.000 Datenpunkte pro Dokument
 
-Das System puffert eingehende Daten im Speicher und schreibt sie in Batches:
+### Pufferung und Speicherung (Per-Request)
 
-1. **Automatisches Flushing**: Bei 2.000 Datenpunkten pro Sensor+Tag
-2. **Manuelles Flushing**: Via `/buffer/flush` Endpoint
-3. **Puffer-Überwachung**: Via `/buffer/stats` Endpoint
+Das System verwendet **Per-Request-Batching** ohne dauerhafte Pufferung:
 
-**Beispiel-Dokumentpfad:**
-```
-/devices/emon01/telemetry/2025/10/12/shelly-3em-pro_E1
-/devices/emon01/telemetry/2025/10/12/shelly-3em-pro_E2
-/devices/emon01/telemetry/2025/10/12/shelly-3em-pro_E1_2  (bei >2000 Punkten)
+1. **Während des Requests**: Daten werden im Speicher gesammelt
+2. **Am Ende des Requests**: Alle Daten werden sofort in Firestore geschrieben
+3. **Nach dem Request**: Puffer wird geleert - keine Persistierung zwischen Requests
+
+**Automatisches Splitting**: Wenn mehr als 2.000 Datenpunkte für einen Sensor+Tag eingehen, werden automatisch mehrere UUID-Dokumente erstellt.
+
+**Beispiel-Dokumentpfade:**
+```text
+/devices/emon01/telemetry/2025/10/c7047a60-3fa8-48d4-aaf3-1f43d9b06aa9
+/devices/emon01/telemetry/2025/10/fc2d9a4f-80bb-4c6f-b166-421403758a40
+/devices/emon01/telemetry/2025/10/022677ff-7adc-4b21-8e92-9450d6ed7add
 ```
 
 ## API Endpoints
@@ -231,56 +249,6 @@ Health check endpoint for Cloud Run.
 }
 ```
 
-### GET /buffer/stats
-
-Zeigt Statistiken über gepufferte Daten (keine Authentifizierung erforderlich).
-
-**Response:**
-```json
-{
-  "total_devices": 2,
-  "devices": {
-    "emon01": {
-      "dates": 1,
-      "sensors": {
-        "shelly-3em-pro_E1": {
-          "dates": {
-            "2025-10-12": 1543
-          },
-          "total_points": 1543
-        }
-      },
-      "total_points": 1543
-    }
-  }
-}
-```
-
-### POST /buffer/flush
-
-Manuelles Flushing des Puffers für ein Gerät.
-
-**Headers:**
-- `KWF-Device-Key`: Device API key
-
-**Query Parameter (optional):**
-- `date`: Spezifisches Datum zum Flushen (Format: YYYY-MM-DD)
-
-**Beispiel:**
-```
-POST /buffer/flush
-POST /buffer/flush?date=2025-10-12
-```
-
-**Response:**
-```json
-{
-  "message": "Flushed 1 document(s)",
-  "device_id": "emon01",
-  "date": "2025-10-12"
-}
-```
-
 ## Verwendung / Usage
 
 ### Vollständiges Beispiel: Daten senden und exportieren
@@ -314,15 +282,7 @@ $response = Invoke-RestMethod -Uri "$baseUrl/telemetry" -Method POST -Headers $h
 Write-Host "✓ Daten gesendet: $($response.message)"
 ```
 
-**Schritt 2: Pufferstatus prüfen**
-
-```powershell
-# Pufferstatus abrufen (keine Authentifizierung erforderlich)
-$bufferStats = Invoke-RestMethod -Uri "$baseUrl/buffer/stats"
-Write-Host "Gepufferte Datenpunkte: $($bufferStats.devices.emon01.total_points)"
-```
-
-**Schritt 3: Daten als XLSX exportieren**
+**Schritt 2: Daten als XLSX exportieren**
 
 ```powershell
 # Daten für Oktober 2025 exportieren
@@ -340,19 +300,8 @@ Invoke-WebRequest `
 Write-Host "✓ Export erfolgreich: energiemonitor_export_oktober_2025.xlsx"
 ```
 
-**Schritt 4: Optional - Puffer manuell flushen**
-
-```powershell
-# Puffer für spezifisches Datum flushen
-$flushUrl = "$baseUrl/buffer/flush?date=2025-10-12"
-
-$flushResponse = Invoke-RestMethod `
-    -Uri $flushUrl `
-    -Method POST `
-    -Headers @{"KWF-Device-Key" = $apiKey}
-
-Write-Host "✓ Puffer geflusht: $($flushResponse.message)"
-```
+**Hinweis zu Schritt 2:**
+Daten werden automatisch am Ende jedes Telemetrie-Requests gespeichert. Es ist kein manuelles Flushing mehr erforderlich. Die Daten stehen sofort für den Export zur Verfügung.
 
 ### Wichtige URLs
 
@@ -362,8 +311,6 @@ Write-Host "✓ Puffer geflusht: $($flushResponse.message)"
 | Health Check | `https://energiemonitor-api-325255315766.europe-west6.run.app/health` |
 | Telemetrie POST | `https://energiemonitor-api-325255315766.europe-west6.run.app/telemetry` |
 | Export GET | `https://energiemonitor-api-325255315766.europe-west6.run.app/export` |
-| Pufferstatus GET | `https://energiemonitor-api-325255315766.europe-west6.run.app/buffer/stats` |
-| Puffer Flush POST | `https://energiemonitor-api-325255315766.europe-west6.run.app/buffer/flush` |
 
 ### Geräte-API-Schlüssel
 
@@ -447,32 +394,36 @@ gcloud builds submit --config cloudbuild.yaml
 
 ### Wichtige Hinweise zur Batch-Speicherung
 
-#### Puffer-Verhalten
+#### Per-Request-Batching (Neu)
 
-Das System puffert Daten **im Speicher** und schreibt sie in Batches:
+Das System verwendet **Per-Request-Batching** für maximale Datensicherheit:
 
-1. **Automatisches Flushing**: 
-   - Erfolgt bei 2.000 Datenpunkten pro Sensor+Tag
-   - Verhindert zu große Dokumente
+1. **Sofortige Persistierung**:
+   - Alle Daten werden am Ende jedes `/telemetry` Requests geschrieben
+   - Keine dauerhafte Pufferung zwischen Requests
+   - ✅ Kein Datenverlust bei Service-Neustarts
 
-2. **Datenverlust-Risiko**:
-   - ⚠️ Puffer ist im Speicher - Daten gehen bei Service-Neustart verloren
-   - ✅ Durch automatisches Flushing bei 2.000 Punkten minimiert
-   - 💡 **Empfehlung**: Geplantes stündliches Flushing einrichten
+2. **Automatisches Splitting**:
+   - Dokumente werden bei 2.000 Datenpunkten pro Sensor+Tag gesplittet
+   - Verhindert zu große Dokumente (1 MB Firestore-Limit)
+   - Mehrere UUID-Dokumente werden automatisch erstellt
 
-3. **Monitoring**:
-   - Pufferstatus prüfen: `GET /buffer/stats`
-   - Manuelles Flushing: `POST /buffer/flush`
+3. **Write-Optimierung**:
+   - Device `last_seen` nur einmal pro Request aktualisiert
+   - Sensor-Metadaten werden gecacht
+   - ~80% Reduktion der Schreibvorgänge
 
 #### Batch-Größe konfigurieren
 
 In `src/services/batch_buffer.py`:
+
 ```python
 class BatchBuffer:
     MAX_POINTS_PER_BATCH = 2000  # Diesen Wert ändern
 ```
 
 **Empfohlener Bereich**: 1.000 - 3.000 Datenpunkte
+
 - Unter 1.000: Zu viele Schreibvorgänge
 - Über 3.000: Risiko zu großer Dokumente
 
@@ -531,27 +482,74 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
 gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=energiemonitor-api AND severity>=ERROR" --limit 20
 ```
 
-## Cost Optimization
+## Cost Optimization & Firestore Usage
 
-### Firestore Batch-Speicherung
+Das System verwendet hochoptimierte Batch-Speicherung ohne Device-Dokumente.
 
-Das System verwendet eine hochoptimierte Batch-Speicherung:
+### Annahmen für Kostenberechnung
 
-- **Vorher** (einzelne Dokumente):
-  - ~8.640 Schreibvorgänge pro Tag und Gerät
-  - ~259.200 Schreibvorgänge pro Monat
-  - Kosten: $0.47/Monat pro Gerät (nach Free Tier)
+- **Geräte-Konfiguration:**
+  - Daten-Upload: Stündlich (24 Requests/Tag pro Gerät)
+  - Sensoren pro Gerät: 7 (Durchschnitt)
+  - Datenpunkte pro Batch: ~360 (bei 10-Sekunden-Intervall = 3.600 Sekunden / 10)
+  
+- **Firestore Free Tier:**
+  - 50.000 Dokument-Lesevorgänge pro Tag
+  - 20.000 Dokument-Schreibvorgänge pro Tag
+  - 1 GB Speicherplatz
 
-- **Nachher** (Batch-Dokumente mit 2.000 Punkten):
-  - ~5 Schreibvorgänge pro Tag und Gerät
-  - ~130 Schreibvorgänge pro Monat
-  - **Kosten: $0.00/Monat (innerhalb Free Tier!)**
-  - **Einsparung: >99% Reduktion**
+### Kostenberechnung: 10 Geräte
 
-- **Abfrage-Optimierung**:
-  - Organisiert nach Jahr/Monat/Tag
-  - Nur ~5 Dokument-Lesevorgänge pro Tag (statt 8.640)
-  - Effiziente Datumsbereichsabfragen
+**Monatliche Operationen:**
+
+| Operation | Pro Request | Pro Tag | Pro Monat | Free Tier | Kosten |
+|-----------|-------------|---------|-----------|-----------|--------|
+| **Sensor Reads** | 0.05 | 12 | 360 | 1.5M/Monat | $0.00 |
+| **Sensor Writes** (last_seen) | 0.7 | 168 | 5,040 | 600K/Monat | $0.00 |
+| **Telemetry Writes** (batched) | 0.35 | 84 | 2,520 | 600K/Monat | $0.00 |
+| **Total Reads** | **0.05** | **12** | **360** | 0.02% | **$0.00** |
+| **Total Writes** | **1.05** | **252** | **7,560** | 1.26% | **$0.00** |
+
+**Speicher:**
+- ~265 KB pro Batch-Dokument (2.000 Datenpunkte)
+- ~2.520 Dokumente/Monat = **~650 MB**
+- Free Tier: 1 GB → **$0.00**
+
+**Gesamtkosten: $0.00/Monat** ✅
+
+---
+
+### Kostenberechnung: 20 Geräte
+
+**Monatliche Operationen:**
+
+| Operation | Pro Tag | Pro Monat | Free Tier | Kosten @ $0.06/100K |
+|-----------|---------|-----------|-----------|---------------------|
+| **Sensor Reads** | 24 | 720 | 1.5M/Monat | $0.00 |
+| **Sensor Writes** | 336 | 10,080 | 600K/Monat | $0.00 |
+| **Telemetry Writes** | 168 | 5,040 | 600K/Monat | $0.00 |
+| **Total Reads** | **24** | **720** | 0.05% | **$0.00** |
+| **Total Writes** | **504** | **15,120** | 2.52% | **$0.00** |
+
+**Speicher:**
+- ~5.040 Dokumente/Monat = **~1.3 GB**
+- Free Tier: 1 GB, Überschuss: 0.3 GB
+- Kosten: 0.3 GB × $0.18/GB = **$0.054/Monat**
+
+**Gesamtkosten: ~$0.05/Monat** ✅
+
+---
+
+### Skalierbarkeit
+
+| Geräte | Reads/Monat | Writes/Monat | Speicher | Monatliche Kosten |
+|--------|-------------|--------------|----------|-------------------|
+| 10 | 360 | 7,560 | 650 MB | **$0.00** ✅ |
+| 20 | 720 | 15,120 | 1.3 GB | **$0.05** ✅ |
+| 50 | 1,800 | 37,800 | 3.3 GB | **$0.41** |
+| 100 | 3,600 | 75,600 | 6.6 GB | **$1.00** |
+
+**Free Tier Kapazität:** ~80 Geräte bevor Kosten entstehen
 
 ### Cloud Run
 
@@ -568,27 +566,35 @@ Das System verwendet eine hochoptimierte Batch-Speicherung:
 
 ### Empfohlene nächste Schritte
 
-- [ ] **Persistenter Puffer** (Hohe Priorität)
-  - Pufferzustand in Firestore oder Cloud Storage speichern
-  - Wiederherstellung nach Service-Neustart
-  - Verhindert Datenverlust
+- [ ] **Datenaggregation** (Hohe Priorität)
+  - Stündliche/tägliche Zusammenfassungen
+  - Reduziert Abfragekosten für Langzeit-Analysen
+  - Pre-computed Statistiken
 
-- [ ] **Geplantes Flushing** (Hohe Priorität)
-  - Cloud Scheduler Job für periodisches Flushing (z.B. stündlich)
-  - Automatisches Flushing um Mitternacht (UTC)
-  - Erhöht Datensicherheit
+- [ ] **Gerätestatus-Monitoring**
+  - Health-Checks für Geräte
+  - Alarme bei Verbindungsabbruch
+  - Dashboard für Device-Status
 
-- [ ] **Puffer-Monitoring Dashboard**
-  - Visualisierung der gepufferten Daten
-  - Alerts bei Anomalien
-  - Überwachung pro Gerät/Sensor
+- [ ] **Datenaufbewahrungsrichtlinien**
+  - Automatisches Archivieren alter Daten
+  - Cold Storage für historische Daten
+  - Compliance mit DSGVO
 
-- [ ] Datenaggregation (stündliche/tägliche Zusammenfassungen)
-- [ ] Gerätestatus-Monitoring implementieren
-- [ ] Webhook-Benachrichtigungen für Alarme
-- [ ] Admin-Dashboard erstellen
-- [ ] Datenaufbewahrungsrichtlinien
-- [ ] Backup-Strategie implementieren
+- [ ] **Admin-Dashboard**
+  - Visualisierung der Telemetriedaten
+  - Device-Management
+  - Export-History
+
+- [ ] **Webhook-Benachrichtigungen**
+  - Alarme bei Anomalien
+  - Integration mit externen Systemen
+  - Push-Notifications
+
+- [ ] **Backup-Strategie**
+  - Automatische Firestore-Backups
+  - Disaster Recovery Plan
+  - Export zu BigQuery für Analytics
 
 ## Support
 

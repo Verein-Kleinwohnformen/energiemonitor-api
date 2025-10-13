@@ -94,7 +94,21 @@ def store_telemetry(device_id):
                 errors.append(f"Record {idx}: {message}")
         
         # Log summary
-        logger.info(f"Device {device_id}: Batch complete - Stored: {stored_count}, Failed: {failed_count}")
+        logger.info(f"Device {device_id}: Batch buffering complete - Buffered: {stored_count}, Failed: {failed_count}")
+        
+        # CRITICAL: Write all buffered data to Firestore immediately
+        # This ensures no data is held in memory between requests
+        if stored_count > 0:
+            write_success, write_message = firebase_service.store_telemetry_batch(device_id)
+            if not write_success:
+                logger.error(f"Device {device_id}: Failed to write batch to Firestore - {write_message}")
+                return jsonify({
+                    'error': 'Failed to persist data to Firestore',
+                    'device_id': device_id,
+                    'message': write_message
+                }), 500
+            
+            logger.info(f"Device {device_id}: Batch write complete - {write_message}")
         
         # Return appropriate response
         if stored_count > 0 and failed_count == 0:
@@ -129,13 +143,17 @@ def get_buffer_stats():
     """
     Get current buffer statistics (no authentication required for monitoring)
     
+    NOTE: This endpoint is DEPRECATED as data is now written immediately after each request.
+    The buffer is only used temporarily within a single request and is always empty between requests.
+    
     Returns information about:
-    - Number of devices with buffered data
+    - Number of devices with buffered data (should always be 0 between requests)
     - Number of data points per device/sensor/date
     - Total data points in buffer
     """
     try:
         stats = firebase_service.get_buffer_stats()
+        stats['note'] = 'DEPRECATED: Buffer is now per-request only and written immediately'
         return jsonify(stats), 200
     except Exception as e:
         logger.exception(f"Error getting buffer stats: {str(e)}")
@@ -148,10 +166,33 @@ def flush_buffer(device_id):
     """
     Manually flush the buffer for a specific device or date.
     
+    NOTE: This endpoint is DEPRECATED and NO LONGER NEEDED.
+    Data is now automatically written to Firestore at the end of each telemetry request.
+    There is no persistent buffer between requests.
+    
     Optional query parameters:
     - date: Flush specific date (format: YYYY-MM-DD)
     
     If no date specified, flushes all buffered data for the device.
+    """
+    try:
+        # Return message indicating this is no longer needed
+        logger.info(f"Device {device_id}: Flush endpoint called but deprecated - data writes automatically")
+        return jsonify({
+            'message': 'DEPRECATED: Manual flush no longer needed. Data is written automatically after each request.',
+            'device_id': device_id
+        }), 200
+    except Exception as e:
+        logger.exception(f"Error in flush endpoint: {str(e)}")
+        return jsonify({'error': f'Failed: {str(e)}'}), 500
+
+
+@telemetry_bp.route('/buffer/flush-legacy', methods=['POST'])
+@require_device_key
+def flush_buffer_legacy(device_id):
+    """
+    LEGACY: Old flush endpoint kept for backward compatibility.
+    This actually flushes any remaining data in buffer (should be empty).
     """
     try:
         date_str = request.args.get('date')
@@ -159,7 +200,7 @@ def flush_buffer(device_id):
         success, message = firebase_service.flush_buffer(device_id, date_str)
         
         if success:
-            logger.info(f"Device {device_id}: Manual flush triggered - {message}")
+            logger.info(f"Device {device_id}: Legacy flush triggered - {message}")
             return jsonify({
                 'message': message,
                 'device_id': device_id,
