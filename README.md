@@ -73,19 +73,20 @@ Das System verwendet eine **optimierte Batch-Speicherung mit UUID-Dokumenten**, 
   │   │           "count": 2000,
   │   │           "created_at": "2025-10-12T10:30:00Z"
   │   │         }
-  └── sensors/
-      └── {sensor_id}: {
-          "sensor_id": "shelly-3em-pro",
-          "sensor_type": "shelly-3em-pro",
+  └── metering_points/
+      └── {metering_point}: {
           "metering_point": "E1",
           "device_id": "emon01",
+          "sensor_types": ["victron", "shelly-3em-pro"],  // Array für mehrere Sensoren pro Messpunkt
           "first_seen": 1760084970005,
           "last_seen": 1760184970005,              // Aktualisiert bei jedem Request
-          "value_fields": ["voltage", "act_power", "pf"]
+          "value_fields": ["voltage", "act_power", "current"]  // Union aller Sensor-Felder
         }
 ```
 
-**Hinweis:** Es gibt **kein separates Device-Dokument** mehr. Die `last_seen` Information wird direkt in den Sensor-Dokumenten gespeichert. Dies reduziert Schreibvorgänge um 78%.
+**Hinweis:** Es gibt **kein separates Device-Dokument** mehr. Die `last_seen` Information wird direkt in den Messpunkt-Dokumenten gespeichert. Dies reduziert Schreibvorgänge um 78%.
+
+**Messpunkt-basierte Architektur**: Die Struktur orientiert sich an den **physischen Messpunkten** (E1, E2, I1, K0), nicht an einzelnen Sensoren. Ein Messpunkt kann von mehreren Sensoren gleichzeitig gemessen werden (z.B. victron UND shelly-3em-pro an E1). Die `sensor_types` werden als Array gespeichert, wobei neue Sensor-Typen automatisch hinzugefügt werden.
 
 ### Vorteile der Architektur
 
@@ -504,8 +505,8 @@ Das System verwendet hochoptimierte Batch-Speicherung ohne Device-Dokumente.
 
 | Operation | Pro Request | Pro Tag | Pro Monat | Free Tier | Kosten |
 |-----------|-------------|---------|-----------|-----------|--------|
-| **Sensor Reads** | 0.05 | 12 | 360 | 1.5M/Monat | $0.00 |
-| **Sensor Writes** (last_seen) | 0.7 | 168 | 5,040 | 600K/Monat | $0.00 |
+| **Metering Point Reads** | 0.05 | 12 | 360 | 1.5M/Monat | $0.00 |
+| **Metering Point Writes** (last_seen) | 0.7 | 168 | 5,040 | 600K/Monat | $0.00 |
 | **Telemetry Writes** (batched) | 0.35 | 84 | 2,520 | 600K/Monat | $0.00 |
 | **Total Reads** | **0.05** | **12** | **360** | 0.02% | **$0.00** |
 | **Total Writes** | **1.05** | **252** | **7,560** | 1.26% | **$0.00** |
@@ -525,8 +526,8 @@ Das System verwendet hochoptimierte Batch-Speicherung ohne Device-Dokumente.
 
 | Operation | Pro Tag | Pro Monat | Free Tier | Kosten @ $0.06/100K |
 |-----------|---------|-----------|-----------|---------------------|
-| **Sensor Reads** | 24 | 720 | 1.5M/Monat | $0.00 |
-| **Sensor Writes** | 336 | 10,080 | 600K/Monat | $0.00 |
+| **Metering Point Reads** | 24 | 720 | 1.5M/Monat | $0.00 |
+| **Metering Point Writes** | 336 | 10,080 | 600K/Monat | $0.00 |
 | **Telemetry Writes** | 168 | 5,040 | 600K/Monat | $0.00 |
 | **Total Reads** | **24** | **720** | 0.05% | **$0.00** |
 | **Total Writes** | **504** | **15,120** | 2.52% | **$0.00** |

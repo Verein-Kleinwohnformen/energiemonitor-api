@@ -4,7 +4,7 @@ from typing import Dict, Any, Tuple, List, Optional
 from datetime import datetime, timezone
 from google.cloud import firestore
 from google.cloud import secretmanager
-from api.models.sensor import SensorMetadata
+from api.models.metering_point import MeteringPointMetadata
 from services.batch_buffer import BatchBuffer
 import logging
 
@@ -17,9 +17,9 @@ class FirebaseService:
     
     Firestore structure (OPTIMIZED - No device document):
     /devices/{device_id}/telemetry/{year}/{month}/{uuid}
-    /devices/{device_id}/sensors/{sensor_id}
+    /devices/{device_id}/metering_points/{metering_point}
     
-    Note: No separate device document needed. Device info tracked via sensor metadata.
+    Note: No separate device document needed. Device info tracked via metering point metadata.
     
     Batching strategy (SAFE - No data loss risk):
     - Data is buffered ONLY during a single API request
@@ -68,7 +68,7 @@ class FirebaseService:
         self.db = firestore.Client()
         self.project_id = os.environ.get('GCP_PROJECT')
         self._device_keys_cache = None
-        self._sensor_metadata_cache = set()  # Track sensors we've already created/updated
+        self._metering_point_metadata_cache = set()  # Track metering points we've already created/updated
         self.batch_buffer = BatchBuffer()
         logger.info("FirebaseService initialized with batching enabled")
     
@@ -121,10 +121,10 @@ class FirebaseService:
                 logger.info(f"Single batch reached 2,000 points for device {device_id}, writing {len(documents)} document(s)")
                 self._write_documents(documents)
                 
-                # Update sensor metadata for the flushed documents
+                # Update metering point metadata for the flushed documents
                 for doc in documents:
                     if 'data' in doc:
-                        self._update_sensor_metadata(device_id, doc['data'])
+                        self._update_metering_point_metadata(device_id, doc['data'])
             
             return True, "Data point added to request buffer"
             
@@ -139,7 +139,7 @@ class FirebaseService:
         This should be called at the END of each telemetry API request to ensure
         all data from the request is persisted immediately.
         
-        Also updates sensor metadata with last_seen timestamp.
+        Also updates metering point metadata with last_seen timestamp.
         
         Args:
             device_id: Device identifier
@@ -155,19 +155,28 @@ class FirebaseService:
                 logger.info(f"Writing {len(documents)} document(s) to Firestore for device {device_id}")
                 self._write_documents(documents)
                 
-                # Update sensor metadata with last_seen (only once per sensor per request)
+                # Update metering point metadata with last_seen (only once per metering point per request)
                 for doc in documents:
                     if 'data' in doc:
                         doc_data = doc['data']
-                        self._update_sensor_metadata(device_id, doc_data)
+                        self._update_metering_point_metadata(device_id, doc_data)
                 
                 logger.info(f"Device {device_id}: Batch write complete - Wrote {len(documents)} document(s) to Firestore")
+                
+                # Clear metering point metadata cache for next request
+                # This ensures we always check Firestore for metering point existence
+                self._metering_point_metadata_cache.clear()
+                
                 return True, f"Wrote {len(documents)} document(s) to Firestore"
             else:
+                # Clear cache even if no data written
+                self._metering_point_metadata_cache.clear()
                 return True, "No data to write"
                 
         except Exception as e:
             logger.error(f"Failed to write batch to Firestore: {e}", exc_info=True)
+            # Clear cache even on error
+            self._metering_point_metadata_cache.clear()
             return False, f"Failed to write batch: {str(e)}"
     
     def flush_buffer(self, device_id: str = None, date_str: str = None) -> Tuple[bool, str]:
@@ -191,13 +200,13 @@ class FirebaseService:
                 logger.info(f"Flushing {len(documents)} document(s) to Firestore")
                 self._write_documents(documents)
                 
-                # Update sensor metadata with last_seen
+                # Update metering point metadata with last_seen
                 for doc in documents:
                     if 'data' in doc:
                         doc_data = doc['data']
                         dev_id = doc_data.get('device_id')
                         if dev_id:
-                            self._update_sensor_metadata(dev_id, doc_data)
+                            self._update_metering_point_metadata(dev_id, doc_data)
                 
                 return True, f"Flushed {len(documents)} document(s)"
             else:
@@ -235,43 +244,48 @@ class FirebaseService:
             doc_ref.set(data)
             logger.info(f"Wrote document to {collection_path}/{doc_ref.id} with {data['count']} data points from sensor {data.get('sensor_id')} at metering point {data.get('metering_point')}")
     
-    def _update_sensor_metadata(self, device_id: str, data: Dict[str, Any]):
+    def _update_metering_point_metadata(self, device_id: str, data: Dict[str, Any]):
         """
-        Update sensor metadata including last_seen timestamp.
+        Update metering point metadata including last_seen timestamp and sensor_types array.
         Called only during buffer flush to optimize write operations.
-        Uses caching to avoid redundant reads/writes within a single request.
+        Uses per-request caching to avoid redundant reads/writes within a single request.
         
-        Note: last_seen is now stored in sensor documents instead of device document,
+        Note: last_seen is now stored in metering_point documents instead of device document,
         reducing write operations by 78%.
+        
+        Cache is cleared between requests, so always checks Firestore for document existence.
         """
         try:
+            metering_point = data.get('metering_point')
             sensor_id = data.get('sensor_id')
-            if not sensor_id:
+            
+            if not metering_point or not sensor_id:
                 return
             
-            sensor_key = f"{device_id}_{sensor_id}"
+            mp_key = f"{device_id}_{metering_point}"
             
-            # If we've already created/updated this sensor in this request, skip
-            if sensor_key in self._sensor_metadata_cache:
+            # If we've already created/updated this metering point in THIS REQUEST, skip
+            # Cache is only for the current request, not persistent
+            if mp_key in self._metering_point_metadata_cache:
                 return
             
-            sensor_ref = self.db.collection(f'devices/{device_id}/sensors').document(sensor_id)
+            mp_ref = self.db.collection(f'devices/{device_id}/metering_points').document(metering_point)
             
             # Use end_timestamp if available (last data point in batch), otherwise current time
             timestamp = data.get('end_timestamp') or data.get('timestamp') or int(datetime.now().timestamp() * 1000)
             
-            # Get current metadata or create new
-            sensor_doc = sensor_ref.get()
+            # Always check if document exists (not relying on persistent cache)
+            mp_doc = mp_ref.get()
             
-            if sensor_doc.exists:
-                # Update existing sensor with last_seen
-                sensor_ref.update({
+            if mp_doc.exists:
+                # Update existing metering point with last_seen and add sensor_type to array
+                mp_ref.update({
                     'last_seen': timestamp,
-                    'metering_point': data.get('metering_point', ''),
+                    'sensor_types': firestore.ArrayUnion([sensor_id])  # Add sensor_type if not already present
                 })
-                logger.debug(f"Updated sensor metadata for {sensor_id} with last_seen={timestamp}")
+                logger.debug(f"Updated metering point metadata for {metering_point} with last_seen={timestamp}, added sensor_type={sensor_id}")
             else:
-                # Create new sensor metadata
+                # Create new metering point metadata
                 value_fields = list(data.get('values', {}).keys()) if 'values' in data else []
                 
                 # For batch documents, extract fields from first data point
@@ -280,24 +294,22 @@ class FirebaseService:
                     if 'values' in first_point:
                         value_fields = list(first_point['values'].keys())
                 
-                sensor_metadata = SensorMetadata(
-                    sensor_id=sensor_id,
-                    sensor_type=sensor_id,  # Could be enhanced to detect type
-                    metering_point=data.get('metering_point', ''),
+                mp_metadata = MeteringPointMetadata(
+                    metering_point=metering_point,
                     device_id=device_id,
+                    sensor_types=[sensor_id],  # Initialize with first sensor type
                     first_seen=data.get('start_timestamp') or timestamp,
                     last_seen=timestamp,
-                    data_count=0,  # We don't track count anymore due to batching
                     value_fields=value_fields
                 )
-                sensor_ref.set(sensor_metadata.to_dict())
-                logger.info(f"Created sensor metadata for {sensor_id} with last_seen={timestamp}")
+                mp_ref.set(mp_metadata.to_dict())
+                logger.info(f"Created metering point metadata for {metering_point} with sensor_type={sensor_id}, last_seen={timestamp}")
             
-            # Cache this sensor to avoid redundant updates in the same request
-            self._sensor_metadata_cache.add(sensor_key)
+            # Cache this metering point to avoid redundant updates in THIS REQUEST only
+            self._metering_point_metadata_cache.add(mp_key)
                 
         except Exception as e:
-            logger.warning(f"Failed to update sensor metadata: {e}")
+            logger.warning(f"Failed to update metering point metadata: {e}")
     
 
     
