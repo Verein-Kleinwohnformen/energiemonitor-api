@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from collections import defaultdict
 import threading
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +210,16 @@ class BatchBuffer:
         month = date_parts[1]
         day = date_parts[2]
         
-        # Create document
+        # Generate random document ID (UUID)
+        document_id = str(uuid.uuid4())
+        
+        # Create document with all metadata stored in the document data
         doc = {
             'path': f'devices/{device_id}/telemetry/{year}/{month}',
-            'document_id': f'{day}_{sensor_id}_{metering_point}',  # Include day in document ID
+            'document_id': document_id,
             'data': {
                 **buffer_entry['metadata'],
+                'day': int(day),  # Store day as a field for filtering
                 'data_points': buffer_entry['data_points'],
                 'count': len(buffer_entry['data_points']),
                 'created_at': datetime.now(timezone.utc).isoformat()
