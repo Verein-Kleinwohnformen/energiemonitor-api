@@ -174,6 +174,8 @@ Receives telemetry data from NodeRED devices.
 
 Exportiert Telemetriedaten als XLSX-Datei zum Download.
 
+**⚠️ Maximum export period: 31 days**
+
 **Service URL:**
 ```
 https://energiemonitor-api-325255315766.europe-west6.run.app
@@ -186,10 +188,12 @@ https://energiemonitor-api-325255315766.europe-west6.run.app
 - `start_date`: Startdatum (ISO-Format YYYY-MM-DD oder Timestamp in ms)
 - `end_date`: Enddatum (ISO-Format YYYY-MM-DD oder Timestamp in ms)
 
+**⚠️ Wichtig:** Der maximale Zeitraum für einen Export beträgt 31 Tage. Längere Zeiträume werden mit einem Fehler abgelehnt.
+
 **Beispiele:**
 
 ```bash
-# Mit ISO-Datum
+# Mit ISO-Datum (maximal 31 Tage)
 GET https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31
 
 # Mit Timestamp (Millisekunden)
@@ -237,6 +241,7 @@ Tab "power-meter":
 - ✅ Automatische Sortierung nach Timestamp
 - ✅ Alle Sensoren in separaten Tabs
 - ✅ Spaltenbreiten automatisch angepasst
+- ⚠️ **Maximaler Export-Zeitraum: 31 Tage** (größere Zeiträume werden abgelehnt)
 - ⚠️ Große Datenbereiche können längere Download-Zeiten verursachen
 
 ### GET /health
