@@ -1,15 +1,20 @@
 """Export service for generating XLSX files"""
 import os
 import tempfile
+import gc
 from typing import Tuple, Optional
 from collections import defaultdict
 from datetime import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill
+from openpyxl.cell import WriteOnlyCell
 from services.firebase_service import FirebaseService
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ExportService:
-    """Handles data export to XLSX format"""
+    """Handles data export to XLSX format with memory optimization"""
     
     def __init__(self):
         """Initialize export service"""
@@ -20,7 +25,7 @@ class ExportService:
                      start_timestamp: int, 
                      end_timestamp: int) -> Tuple[Optional[str], Optional[str]]:
         """
-        Generate XLSX file with sensor data
+        Generate XLSX file with sensor data using memory-optimized write-only mode
         
         Args:
             device_id: Device identifier
@@ -31,6 +36,8 @@ class ExportService:
             Tuple of (file_path: str, error: str)
         """
         try:
+            logger.info(f"Starting XLSX generation for device {device_id}")
+            
             # Get all telemetry data for the period
             data = self.firebase_service.get_telemetry_data(
                 device_id, 
@@ -41,18 +48,24 @@ class ExportService:
             if not data:
                 return None, "No data found for the specified period"
             
-            # Group data by sensor_id
+            logger.info(f"Retrieved {len(data)} data points")
+            
+            # Group data by sensor_id (in memory, but necessary for separate sheets)
             sensor_data = defaultdict(list)
             for entry in data:
                 sensor_id = entry.get('sensor_id', 'unknown')
                 sensor_data[sensor_id].append(entry)
             
-            # Create workbook
-            wb = openpyxl.Workbook()
-            wb.remove(wb.active)  # Remove default sheet
+            # Clear original data list to free memory
+            del data
+            gc.collect()
+            
+            # Create workbook in write-only mode for better memory efficiency
+            wb = openpyxl.Workbook(write_only=True)
             
             # Create a tab for each sensor
             for sensor_id, entries in sensor_data.items():
+                logger.info(f"Processing sensor {sensor_id} with {len(entries)} entries")
                 ws = wb.create_sheet(title=self._sanitize_sheet_name(sensor_id))
                 
                 # Get all unique value fields across all entries
@@ -61,19 +74,19 @@ class ExportService:
                     value_fields.update(entry.get('values', {}).keys())
                 value_fields = sorted(list(value_fields))
                 
-                # Create header row
+                # Create header row with styling
                 headers = ['Timestamp', 'Date/Time', 'Metering Point', 'Sensor ID'] + value_fields
-                ws.append(headers)
+                header_cells = []
+                for header_text in headers:
+                    cell = WriteOnlyCell(ws, value=header_text)
+                    cell.font = Font(bold=True)
+                    cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+                    header_cells.append(cell)
+                ws.append(header_cells)
                 
-                # Style header
-                header_font = Font(bold=True)
-                header_fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
-                for cell in ws[1]:
-                    cell.font = header_font
-                    cell.fill = header_fill
-                
-                # Add data rows
-                for entry in sorted(entries, key=lambda x: x.get('timestamp', 0)):
+                # Add data rows (sorted by timestamp)
+                entries.sort(key=lambda x: x.get('timestamp', 0))
+                for entry in entries:
                     timestamp = entry.get('timestamp', 0)
                     dt = datetime.fromtimestamp(timestamp / 1000)
                     
@@ -91,24 +104,25 @@ class ExportService:
                     
                     ws.append(row)
                 
-                # Auto-adjust column widths
-                for column in ws.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 50)
-                    ws.column_dimensions[column_letter].width = adjusted_width
+                # Clear entries for this sensor to free memory
+                sensor_data[sensor_id] = None
+                gc.collect()
+                
+                logger.info(f"Completed sensor {sensor_id}")
             
             # Save to temporary file
             temp_dir = tempfile.gettempdir()
             file_path = os.path.join(temp_dir, f'energiemonitor_{device_id}_{start_timestamp}.xlsx')
+            
+            logger.info(f"Saving XLSX to {file_path}")
             wb.save(file_path)
             
+            # Clean up
+            del wb
+            del sensor_data
+            gc.collect()
+            
+            logger.info("XLSX generation complete")
             return file_path, None
             
         except Exception as e:
