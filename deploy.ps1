@@ -2,15 +2,10 @@
 # Usage: .\deploy.ps1 [PROJECT_ID]
 
 param(
-    [string]$ProjectId
+    [string]$ProjectId = "energiemonitor-kwf"
 )
 
 $ErrorActionPreference = "Stop"
-
-# Get project ID from parameter or prompt
-if (-not $ProjectId) {
-    $ProjectId = Read-Host "Enter your GCP Project ID"
-}
 
 Write-Host "Starting deployment to Google Cloud Run..." -ForegroundColor Green
 Write-Host "Project ID: $ProjectId" -ForegroundColor Yellow
