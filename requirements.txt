@@ -1,6 +1,7 @@
 # Flask web framework
 Flask==3.0.0
 Werkzeug==3.0.1
+Flask-CORS==4.0.0
 
 # Google Cloud libraries
 google-cloud-firestore==2.14.0

@@ -1,11 +1,21 @@
 """Entry point for the KWF energy monitor telemetry data API"""
 import os
 from flask import Flask
+from flask_cors import CORS
 from api.routes.telemetry import telemetry_bp
 from api.routes.export import export_bp
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Enable CORS for the web app domain
+CORS(app, 
+     origins=["https://energiemonitor-kwf.web.app", "https://energiemonitor-kwf.firebaseapp.com"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization", "kwf-device-key"],
+     supports_credentials=True,
+     expose_headers=["Content-Type", "Authorization"]
+)
 
 # Register blueprints
 app.register_blueprint(telemetry_bp)
