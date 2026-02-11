@@ -14,21 +14,27 @@ MAX_EXPORT_DAYS = 31
 @require_device_key
 def export_data(device_id):
     """
-    Export telemetry data as XLSX file
+    Export telemetry and/or manual data as XLSX file
     
     Query parameters:
     - start_date: Start date in ISO format (YYYY-MM-DD) or timestamp (ms)
     - end_date: End date in ISO format (YYYY-MM-DD) or timestamp (ms)
+    - include_manual: Include manual data (default: true)
+    - manual_only: Export only manual data (default: false)
     
     Maximum export period: 31 days
     
     Returns:
-    XLSX file with separate tabs for each sensor
+    XLSX file with separate tabs for different data types
     """
     try:
         # Get query parameters
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
+        
+        # Get new query parameters
+        include_manual = request.args.get('include_manual', 'true').lower() == 'true'
+        manual_only = request.args.get('manual_only', 'false').lower() == 'true'
         
         if not start_date or not end_date:
             return jsonify({
@@ -74,8 +80,20 @@ def export_data(device_id):
                 'error': 'Invalid date range: end_date must be after start_date'
             }), 400
         
+        # Log export request
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Device {device_id}: Exporting data - "
+                   f"include_manual={include_manual}, manual_only={manual_only}")
+        
         # Generate the XLSX file
-        file_path, error = export_service.generate_xlsx(device_id, start_ts, end_ts)
+        file_path, error = export_service.generate_xlsx(
+            device_id=device_id,
+            start_timestamp=start_ts,
+            end_timestamp=end_ts,
+            include_manual=include_manual,
+            manual_only=manual_only
+        )
         
         if error:
             return jsonify({'error': error}), 500
