@@ -113,6 +113,32 @@ class FirebaseService:
             Tuple of (success: bool, message: str)
         """
         try:
+            # Check if at least one valid value exists
+            values = data.get('values', {})
+            if not values:
+                logger.debug(f"Skipping data point with no values dict for device {device_id}")
+                return True, "Data point skipped (no values)"
+            
+            # Check if at least one value is valid (not None, not NaN, not empty string)
+            has_valid_value = False
+            for key, value in values.items():
+                # Check if value is valid
+                if value is not None and value != '' and str(value).lower() != 'nan':
+                    # For numeric values, check if it's actually a valid number
+                    if isinstance(value, (int, float)):
+                        import math
+                        if not math.isnan(value) and not math.isinf(value):
+                            has_valid_value = True
+                            break
+                    else:
+                        # Non-numeric values (strings, booleans) are valid if not empty
+                        has_valid_value = True
+                        break
+            
+            if not has_valid_value:
+                logger.debug(f"Skipping data point - all values invalid for device {device_id}")
+                return True, "Data point skipped (all values invalid)"
+            
             # Add data point to buffer (in-memory, per-request)
             should_flush, documents = self.batch_buffer.add_data_point(device_id, data)
             
@@ -405,6 +431,74 @@ class FirebaseService:
             
         except Exception as e:
             logger.error(f"Error retrieving telemetry data: {e}", exc_info=True)
+            return []
+    
+    def get_manual_data(self, 
+                        device_id: str, 
+                        start_timestamp: int, 
+                        end_timestamp: int) -> List[Dict[str, Any]]:
+        """
+        Retrieve manual energy data for a date range.
+        
+        Manual data structure:
+        /devices/{device_id}/manual/{year}/data/{uuid}
+        
+        Args:
+            device_id: Device identifier
+            start_timestamp: Start time in milliseconds
+            end_timestamp: End time in milliseconds
+            
+        Returns:
+            List of individual data points from manual entries
+        """
+        try:
+            start_dt = datetime.fromtimestamp(start_timestamp / 1000, tz=timezone.utc)
+            end_dt = datetime.fromtimestamp(end_timestamp / 1000, tz=timezone.utc)
+            
+            all_data_points = []
+            
+            # Query manual data by year
+            for year in range(start_dt.year, end_dt.year + 1):
+                # Query the year document's data subcollection
+                year_doc_path = f'devices/{device_id}/manual/{year}'
+                collection_ref = self.db.collection(f'{year_doc_path}/data')
+                
+                # Query all documents in this year's data collection
+                docs = collection_ref.stream()
+                
+                for doc in docs:
+                    doc_data = doc.to_dict()
+                    data_points = doc_data.get('data_points', [])
+                    
+                    # Extract metadata
+                    sensor_id = doc_data.get('sensor_id', 'app_form')
+                    metering_point = doc_data.get('metering_point', 'M0')
+                    device_id_from_doc = doc_data.get('device_id')
+                    metadata = doc_data.get('metadata', {})
+                    
+                    # Flatten data points and filter by timestamp
+                    for point in data_points:
+                        point_timestamp = point.get('timestamp')
+                        
+                        if start_timestamp <= point_timestamp <= end_timestamp:
+                            full_point = {
+                                'timestamp': point_timestamp,
+                                'values': point.get('values', {}),
+                                'sensor_id': sensor_id,
+                                'metering_point': metering_point,
+                                'device_id': device_id_from_doc,
+                                'metadata': metadata  # Include description, energy_type, etc.
+                            }
+                            all_data_points.append(full_point)
+            
+            # Sort by timestamp
+            all_data_points.sort(key=lambda x: x['timestamp'])
+            
+            logger.info(f"Retrieved {len(all_data_points)} manual data points for device {device_id}")
+            return all_data_points
+            
+        except Exception as e:
+            logger.error(f"Error retrieving manual data: {e}", exc_info=True)
             return []
     
     def get_device_sensors(self, device_id: str) -> List[Dict[str, Any]]:
