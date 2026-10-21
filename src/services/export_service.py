@@ -1,9 +1,10 @@
 """Export service for generating XLSX files"""
 import os
+import json
+import shutil
 import tempfile
 import gc
 from typing import Tuple, Optional
-from collections import defaultdict
 from datetime import datetime
 import openpyxl
 from openpyxl.styles import Font, PatternFill
@@ -42,49 +43,58 @@ class ExportService:
         try:
             logger.info(f"Starting XLSX generation for device {device_id} (include_manual={include_manual}, manual_only={manual_only})")
             
-            # Get automatic telemetry data (unless manual_only)
-            telemetry_data = [] if manual_only else self.firebase_service.get_telemetry_data(
-                device_id, 
-                start_timestamp, 
-                end_timestamp
-            )
-            
-            # Get manual data (if requested)
+            # Get manual data (if requested); small, kept in memory
             manual_data = [] if not include_manual else self.firebase_service.get_manual_data(
-                device_id, 
-                start_timestamp, 
+                device_id,
+                start_timestamp,
                 end_timestamp
             )
-            
-            if not telemetry_data and not manual_data:
-                return None, "No data found for the specified period"
-            
-            logger.info(f"Retrieved {len(telemetry_data)} telemetry data points and {len(manual_data)} manual data points")
-            
-            # Create workbook in write-only mode for better memory efficiency
-            wb = openpyxl.Workbook(write_only=True)
-            
-            # Automatic telemetry data grouped by sensor
-            if telemetry_data:
-                # Group data by sensor_id (in memory, but necessary for separate sheets)
-                sensor_data = defaultdict(list)
-                for entry in telemetry_data:
-                    sensor_id = entry.get('sensor_id', 'unknown')
-                    sensor_data[sensor_id].append(entry)
-                
+
+            # Telemetry is streamed to per-sensor spool files on disk so that only one
+            # Firestore document is in memory at a time (large ranges used to OOM Cloud Run)
+            spool_dir = tempfile.mkdtemp(prefix='export_')
+            spool_files = {}  # sensor_id -> open file
+            value_fields = {}  # sensor_id -> set of value field names
+            row_counts = {}  # sensor_id -> number of rows
+
+            try:
+                if not manual_only:
+                    for entry in self.firebase_service.iter_telemetry_data(
+                            device_id, start_timestamp, end_timestamp):
+                        sensor_id = entry.get('sensor_id') or 'unknown'
+                        if sensor_id not in spool_files:
+                            spool_files[sensor_id] = open(
+                                os.path.join(spool_dir, f'{len(spool_files)}.jsonl'), 'w', encoding='utf-8')
+                            value_fields[sensor_id] = set()
+                            row_counts[sensor_id] = 0
+                        values = entry.get('values', {})
+                        value_fields[sensor_id].update(values.keys())
+                        row_counts[sensor_id] += 1
+                        spool_files[sensor_id].write(json.dumps({
+                            't': entry.get('timestamp', 0),
+                            'mp': entry.get('metering_point', ''),
+                            'v': values
+                        }) + '\n')
+
+                for f in spool_files.values():
+                    f.close()
+
+                if not spool_files and not manual_data:
+                    return None, "No data found for the specified period"
+
+                logger.info(f"Retrieved telemetry rows per sensor: {row_counts} and {len(manual_data)} manual data points")
+
+                # Create workbook in write-only mode for better memory efficiency
+                wb = openpyxl.Workbook(write_only=True)
+
                 # Create a tab for each sensor
-                for sensor_id, entries in sensor_data.items():
-                    logger.info(f"Processing automatic sensor {sensor_id} with {len(entries)} entries")
+                for index, sensor_id in enumerate(spool_files):
+                    logger.info(f"Processing automatic sensor {sensor_id} with {row_counts[sensor_id]} entries")
                     ws = wb.create_sheet(title=self._sanitize_sheet_name(sensor_id))
-                    
-                    # Get all unique value fields across all entries
-                    value_fields = set()
-                    for entry in entries:
-                        value_fields.update(entry.get('values', {}).keys())
-                    value_fields = sorted(list(value_fields))
-                    
+                    fields = sorted(value_fields[sensor_id])
+
                     # Create header row with styling
-                    headers = ['Timestamp', 'Date/Time', 'Metering Point', 'Sensor ID'] + value_fields
+                    headers = ['Timestamp', 'Date/Time', 'Metering Point', 'Sensor ID'] + fields
                     header_cells = []
                     for header_text in headers:
                         cell = WriteOnlyCell(ws, value=header_text)
@@ -92,63 +102,48 @@ class ExportService:
                         cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
                         header_cells.append(cell)
                     ws.append(header_cells)
-                    
-                    # Add data rows (sorted by timestamp)
-                    entries.sort(key=lambda x: x.get('timestamp', 0))
-                    for entry in entries:
-                        timestamp = entry.get('timestamp', 0)
-                        dt = datetime.fromtimestamp(timestamp / 1000)
-                        
-                        row = [
-                            timestamp,
-                            dt.strftime('%Y-%m-%d %H:%M:%S'),
-                            entry.get('metering_point', ''),
-                            entry.get('sensor_id', '')
-                        ]
-                        
-                        # Add value fields
-                        values = entry.get('values', {})
-                        for field in value_fields:
-                            row.append(values.get(field, ''))
-                        
-                        ws.append(row)
-                    
-                    # Clear entries for this sensor to free memory
-                    sensor_data[sensor_id] = None
+
+                    # Add data rows (sorted by timestamp); one sensor's compact rows at a time
+                    with open(os.path.join(spool_dir, f'{index}.jsonl'), encoding='utf-8') as spool:
+                        rows = [json.loads(line) for line in spool]
+                    rows.sort(key=lambda r: r['t'])
+                    for r in rows:
+                        dt = datetime.fromtimestamp(r['t'] / 1000)
+                        ws.append([r['t'], dt.strftime('%Y-%m-%d %H:%M:%S'), r['mp'], sensor_id]
+                                  + [r['v'].get(field, '') for field in fields])
+
+                    del rows
                     gc.collect()
-                    
                     logger.info(f"Completed automatic sensor {sensor_id}")
-                
-                # Clear sensor_data
-                del sensor_data
+
+                # Manual data
+                if manual_data:
+                    ws_manual = wb.create_sheet(title="Manual")
+                    self._write_manual_sheet(ws_manual, manual_data)
+                    logger.info("Completed manual data sheet")
+
+                del manual_data
+
+                # Save to temporary file
+                temp_dir = tempfile.gettempdir()
+                file_path = os.path.join(temp_dir, f'energiemonitor_{device_id}_{start_timestamp}.xlsx')
+
+                logger.info(f"Saving XLSX to {file_path}")
+                wb.save(file_path)
+
+                # Clean up
+                del wb
                 gc.collect()
-            
-            # Manual data
-            if manual_data:
-                ws_manual = wb.create_sheet(title="Manual")
-                self._write_manual_sheet(ws_manual, manual_data)
-                logger.info("Completed manual data sheet")
-            
-            # Clear original data lists to free memory
-            del telemetry_data
-            del manual_data
-            gc.collect()
-            
-            # Save to temporary file
-            temp_dir = tempfile.gettempdir()
-            file_path = os.path.join(temp_dir, f'energiemonitor_{device_id}_{start_timestamp}.xlsx')
-            
-            logger.info(f"Saving XLSX to {file_path}")
-            wb.save(file_path)
-            
-            # Clean up
-            del wb
-            gc.collect()
-            
+            finally:
+                for f in spool_files.values():
+                    f.close()
+                shutil.rmtree(spool_dir, ignore_errors=True)
+
             logger.info("XLSX generation complete")
             return file_path, None
-            
+
         except Exception as e:
+            logger.error(f"Failed to generate XLSX: {e}", exc_info=True)
             return None, f"Failed to generate XLSX: {str(e)}"
     
     def _write_combined_sheet(self, ws, telemetry_data: list, manual_data: list) -> None:

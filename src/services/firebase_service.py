@@ -1,7 +1,7 @@
 """Firebase/Firestore service for data storage"""
 import os
-from typing import Dict, Any, Tuple, List, Optional
-from datetime import datetime, timezone
+from typing import Dict, Any, Tuple, List, Optional, Iterator
+from datetime import datetime, timezone, timedelta
 from google.cloud import firestore
 from google.cloud import secretmanager
 from api.models.metering_point import MeteringPointMetadata
@@ -366,72 +366,78 @@ class FirebaseService:
             List of individual telemetry data dictionaries (unbatched)
         """
         try:
-            start_dt = datetime.fromtimestamp(start_timestamp / 1000, tz=timezone.utc)
-            end_dt = datetime.fromtimestamp(end_timestamp / 1000, tz=timezone.utc)
-            
-            all_data_points = []
-            
-            # Iterate through each day in the range
-            current_date = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            while current_date <= end_dt:
-                year = current_date.year
-                month = f"{current_date.month:02d}"
-                day = current_date.day
-                
-                collection_path = f'devices/{device_id}/telemetry/{year}/{month}'
-                collection_ref = self.db.collection(collection_path)
-                
-                # Build Firestore query with filters
-                query = collection_ref.where('day', '==', day)
-                
-                if sensor_id:
-                    query = query.where('sensor_id', '==', sensor_id)
-                
-                if metering_point:
-                    query = query.where('metering_point', '==', metering_point)
-                
-                # Execute query
-                docs = query.stream()
-                
-                for doc in docs:
-                    doc_data = doc.to_dict()
-                    
-                    data_points = doc_data.get('data_points', [])
-                    
-                    # Extract metadata for each point
-                    sensor_id_from_doc = doc_data.get('sensor_id')
-                    metering_point_from_doc = doc_data.get('metering_point')
-                    device_id_from_doc = doc_data.get('device_id')
-                    
-                    # Flatten batched data points and filter by timestamp
-                    for point in data_points:
-                        point_timestamp = point.get('timestamp')
-                        
-                        # Only include points within the exact timestamp range
-                        if start_timestamp <= point_timestamp <= end_timestamp:
-                            # Reconstruct full data point with metadata
-                            full_point = {
-                                'timestamp': point_timestamp,
-                                'values': point.get('values', {}),
-                                'sensor_id': sensor_id_from_doc,
-                                'metering_point': metering_point_from_doc,
-                                'device_id': device_id_from_doc
-                            }
-                            all_data_points.append(full_point)
-                
-                # Move to next day
-                from datetime import timedelta
-                current_date += timedelta(days=1)
-            
+            all_data_points = list(self.iter_telemetry_data(
+                device_id, start_timestamp, end_timestamp, sensor_id, metering_point))
+
             # Sort by timestamp
             all_data_points.sort(key=lambda x: x['timestamp'])
-            
+
             logger.info(f"Retrieved {len(all_data_points)} data points for device {device_id}")
             return all_data_points
-            
+
         except Exception as e:
             logger.error(f"Error retrieving telemetry data: {e}", exc_info=True)
             return []
+
+    def iter_telemetry_data(self,
+                            device_id: str,
+                            start_timestamp: int,
+                            end_timestamp: int,
+                            sensor_id: Optional[str] = None,
+                            metering_point: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+        """
+        Stream telemetry data points for a date range, one Firestore document at a time.
+
+        Same filtering as get_telemetry_data, but never holds more than one batched
+        document in memory. Points are yielded in document order, not sorted by timestamp.
+        Errors propagate to the caller.
+        """
+        start_dt = datetime.fromtimestamp(start_timestamp / 1000, tz=timezone.utc)
+        end_dt = datetime.fromtimestamp(end_timestamp / 1000, tz=timezone.utc)
+
+        # Iterate through each day in the range
+        current_date = start_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        while current_date <= end_dt:
+            year = current_date.year
+            month = f"{current_date.month:02d}"
+            day = current_date.day
+
+            collection_path = f'devices/{device_id}/telemetry/{year}/{month}'
+            collection_ref = self.db.collection(collection_path)
+
+            # Build Firestore query with filters
+            query = collection_ref.where('day', '==', day)
+
+            if sensor_id:
+                query = query.where('sensor_id', '==', sensor_id)
+
+            if metering_point:
+                query = query.where('metering_point', '==', metering_point)
+
+            for doc in query.stream():
+                doc_data = doc.to_dict()
+
+                # Extract metadata for each point
+                sensor_id_from_doc = doc_data.get('sensor_id')
+                metering_point_from_doc = doc_data.get('metering_point')
+                device_id_from_doc = doc_data.get('device_id')
+
+                # Flatten batched data points and filter by timestamp
+                for point in doc_data.get('data_points', []):
+                    point_timestamp = point.get('timestamp')
+
+                    # Only include points within the exact timestamp range
+                    if start_timestamp <= point_timestamp <= end_timestamp:
+                        yield {
+                            'timestamp': point_timestamp,
+                            'values': point.get('values', {}),
+                            'sensor_id': sensor_id_from_doc,
+                            'metering_point': metering_point_from_doc,
+                            'device_id': device_id_from_doc
+                        }
+
+            # Move to next day
+            current_date += timedelta(days=1)
     
     def get_manual_data(self, 
                         device_id: str, 

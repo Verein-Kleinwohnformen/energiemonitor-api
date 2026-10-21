@@ -39,7 +39,7 @@ gcloud run deploy energiemonitor-api `
   --platform managed `
   --allow-unauthenticated `
   --set-env-vars GCP_PROJECT=$ProjectId `
-  --memory 1Gi `
+  --memory 2Gi `
   --cpu 1 `
   --timeout 300 `
   --max-instances 10 `
