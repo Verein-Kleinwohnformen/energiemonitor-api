@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-21
+
+### Fixed
+- Export: Telemetrie wird auf Disk gestreamt statt im Speicher gehalten (Out-of-Memory-Fehler bei grossen Exporten behoben).
+
+### Changed
+- Cloud Run Arbeitsspeicher von 1 GiB auf **2 GiB** erhöht (`deploy.sh`, `deploy.ps1`, `cloudbuild.yaml`).
+
+## [1.1.0-fixes] - 2026-02-11
+
+### Fixed
+- 2026-02-11: Leere Werte werden nicht mehr gespeichert.
+- 2026-02-10: CORS auf die App-Domains beschränkt und korrigiert.
+
 ## [1.1.0] - 2025-10-22
 
 ### Changed
