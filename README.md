@@ -320,17 +320,7 @@ Daten werden automatisch am Ende jedes Telemetrie-Requests gespeichert. Es ist k
 
 ### Geräte-API-Schlüssel
 
-Die folgenden Geräte sind konfiguriert:
-
-| Device ID | Verwendung |
-|-----------|------------|
-| `emon01` | Produktionsgerät 1 |
-| `emon02` | Produktionsgerät 2 |
-| `emon03` | Produktionsgerät 3 |
-| `testmon00` | Testgerät für Entwicklung |
-| `testmon01` | Testgerät für Batch-Tests |
-
-**Hinweis:** Die tatsächlichen API-Schlüssel sind in Google Secret Manager gespeichert.
+Jedes Gerät hat eine Device-ID (z.B. `<DEVICE_ID>`) und einen eigenen, zufälligen Schlüssel (mindestens 32 Zeichen). Die Zuordnung Device-ID zu Schlüssel liegt in Google Secret Manager und wird nie im Repository abgelegt. Schlüssel für das KWF-System werden vom Team vergeben (energiemonitor@kleinwohnformen.ch). Wer selbst hostet, erzeugt eigene Schlüssel (siehe Abschnitt "Store Device Keys in Secret Manager").
 
 ## Setup & Deployment
 
@@ -610,4 +600,4 @@ For questions or issues:
 
 ## License
 
-Open Source - maintained by [Verein Kleinwohnformen](https://kleinwohnformen.ch)
+Apache License 2.0, siehe [LICENSE](LICENSE). Copyright Verein Kleinwohnformen. Betreut vom [Verein Kleinwohnformen](https://kleinwohnformen.ch).
