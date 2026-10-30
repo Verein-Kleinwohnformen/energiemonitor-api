@@ -7,7 +7,7 @@ Write-Host "============================================================" -Foreg
 
 # Configuration - Using testmon00 for testing
 $baseUrl = "https://energiemonitor-api-325255315766.europe-west6.run.app"
-$apiKey = "kwf-testmon00-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+$apiKey = "<DEVICE_KEY>"
 $deviceId = "testmon00"
 
 Write-Host ""

@@ -1,6 +1,26 @@
-# KWF Energiemonitor API
+# KWF Energiemonitor: Cloud-API
 
-Cloud-based API service for the KWF Energiemonitor project. This service receives telemetry data from NodeRED-equipped energy monitor devices and stores it in Google Cloud Firestore.
+**Status:** produktiv im Langzeittest (Version 1.1.0 plus Fixes, siehe [CHANGELOG](CHANGELOG.md))
+
+Die API nimmt Messwerte der Energiemonitore entgegen (`POST /telemetry`), speichert sie in Google Cloud Firestore und liefert XLSX-Exporte (`GET /export`). Sie gehört zum [KWF Energiemonitor](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs), einem offenen Messsystem für Kleinwohnformen, gebaut für die Energiestudie mit der HSLU und für den [Verein Kleinwohnformen](https://kleinwohnformen.ch). Der Energiemonitor ist kein Produkt, sondern eine offene Plattform zum Nachbauen.
+
+## Für Selbsthoster
+
+Wenn du **nicht** im KWF-System mitmachst (Variante A), sondern alles selbst betreibst (Variante B), brauchst du:
+
+1. ein Google-Cloud-Projekt mit aktivierten APIs: Cloud Run, Cloud Build, Secret Manager und Firestore (Region bewusst wählen, sie lässt sich nicht ändern),
+2. pro Gerät einen zufälligen Device-Key (mindestens 32 Zeichen) im Secret `energiemonitor-device-keys` (siehe [Store Device Keys](#store-device-keys-in-secret-manager)),
+3. `./deploy.sh <PROJEKT-ID>` oder `deploy.ps1` (Region `europe-west6`, **2 GiB** Arbeitsspeicher wegen des XLSX-Exports),
+4. die Firestore-Rules und die App aus dem [App-Repo](https://github.com/Verein-Kleinwohnformen/energiemonitor-app).
+
+Die vollständige Schritt-für-Schritt-Anleitung steht in der [Doku zu Variante B](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/variante-b-selbst-hosten.md). Die technische Referenz unten ist teils Englisch, teils Deutsch.
+
+## Bekannte Grenzen
+
+- Der Export ist auf **31 Tage** begrenzt.
+- Exporte schneiden nach **UTC-Tagen**, nicht nach Lokalzeit.
+- XLSX-Dateien können über 30 MB pro Monat gross werden.
+- Die Authentifizierung läuft über den Header `KWF-Device-Key`, ein Schlüssel pro Gerät. Ratenbegrenzung gibt es nicht.
 
 ## Architecture
 
@@ -22,7 +42,7 @@ energiemonitor-api/
 │   │   │   └── export.py       # Data export endpoint
 │   │   └── models/
 │   │       ├── telemetry.py    # Telemetry data model
-│   │       └── sensor.py       # Sensor metadata model
+│   │       └── metering_point.py # Metering point model
 │   ├── services/
 │   │   ├── firebase_service.py # Firestore operations
 │   │   └── export_service.py   # XLSX generation
@@ -320,17 +340,7 @@ Daten werden automatisch am Ende jedes Telemetrie-Requests gespeichert. Es ist k
 
 ### Geräte-API-Schlüssel
 
-Die folgenden Geräte sind konfiguriert:
-
-| Device ID | Verwendung |
-|-----------|------------|
-| `emon01` | Produktionsgerät 1 |
-| `emon02` | Produktionsgerät 2 |
-| `emon03` | Produktionsgerät 3 |
-| `testmon00` | Testgerät für Entwicklung |
-| `testmon01` | Testgerät für Batch-Tests |
-
-**Hinweis:** Die tatsächlichen API-Schlüssel sind in Google Secret Manager gespeichert.
+Jedes Gerät hat eine Device-ID (z.B. `<DEVICE_ID>`) und einen eigenen, zufälligen Schlüssel (mindestens 32 Zeichen). Die Zuordnung Device-ID zu Schlüssel liegt in Google Secret Manager und wird nie im Repository abgelegt. Schlüssel für das KWF-System werden vom Team vergeben (energiemonitor@kleinwohnformen.ch). Wer selbst hostet, erzeugt eigene Schlüssel (siehe Abschnitt "Store Device Keys in Secret Manager").
 
 ## Setup & Deployment
 
@@ -610,4 +620,4 @@ For questions or issues:
 
 ## License
 
-Open Source - maintained by [Verein Kleinwohnformen](https://kleinwohnformen.ch)
+Apache License 2.0, siehe [LICENSE](LICENSE). Copyright Verein Kleinwohnformen. Betreut vom [Verein Kleinwohnformen](https://kleinwohnformen.ch).

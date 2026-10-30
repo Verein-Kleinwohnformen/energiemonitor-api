@@ -2,7 +2,7 @@
 # This script sends test data and downloads it as XLSX
 
 $baseUrl = "https://energiemonitor-api-325255315766.europe-west6.run.app"
-$apiKey = "testmon00_1234567890"
+$apiKey = "<DEVICE_KEY>"
 $deviceId = "testmon00"
 
 Write-Host "============================================================"
