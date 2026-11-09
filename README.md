@@ -100,9 +100,19 @@ Das System verwendet eine **optimierte Batch-Speicherung mit UUID-Dokumenten**, 
           "sensor_types": ["victron", "shelly-3em-pro"],  // Array für mehrere Sensoren pro Messpunkt
           "first_seen": 1760084970005,
           "last_seen": 1760184970005,              // Aktualisiert bei jedem Request
-          "value_fields": ["voltage", "act_power", "current"]  // Union aller Sensor-Felder
+          "value_fields": ["voltage", "act_power", "current"],  // Union aller Sensor-Felder
+          "data_quality": {                         // optional, nur wenn der Sensor _q_*-Felder sendet
+            "status": "degraded",                   // ok | degraded | no_valid_data
+            "tof_status": 2,                        // weitere _q_*-Felder ohne Präfix
+            "ok_ratio": 0.67,
+            "sensor_id": "apollon",
+            "updated_at": 1794223600000,            // Zeitstempel des neuesten Datensatzes
+            "since": 1794220000000                  // seit wann der Status gilt
+          }
         }
 ```
+
+**Reservierte Felder in `values`:** Schlüssel mit führendem `_` werden nicht in die Datenpunkte gespeichert. Schlüssel mit `_q_` beschreiben die Datenqualität: Die API schreibt pro Request und Messpunkt nur den neuesten Stand nach `metering_points/{mp}.data_quality`. Ein Datensatz, der nur `_q_*`-Felder enthält, gilt als Lebenszeichen: Er aktualisiert `last_seen` und `data_quality`, erzeugt aber keinen Datenpunkt. Beispiel: siehe [R&D-Notiz D1](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/rnd-mioty-apollon.md).
 
 **Hinweis:** Es gibt **kein separates Device-Dokument** mehr. Die `last_seen` Information wird direkt in den Messpunkt-Dokumenten gespeichert. Dies reduziert Schreibvorgänge um 78%.
 

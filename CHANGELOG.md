@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Datenqualität pro Messpunkt: `_q_*`-Felder in `values` werden nach `metering_points/{mp}.data_quality` geschrieben (nur der neueste Stand, `since` bleibt bei gleichem Status). Alle Felder mit führendem `_` werden nicht in Datenpunkten gespeichert.
+- Datensätze nur mit `_q_*`-Feldern gelten als Lebenszeichen (aktualisieren `last_seen`).
+
+### Fixed
+- `value_fields` werden bei jedem Request ergänzt, nicht nur beim Anlegen des Messpunkts. Neue Felder erscheinen so in der App.
+- `last_seen` nimmt den neuesten Zeitstempel aller Dokumente eines Requests und geht nie zurück.
+- Mehrere Sensoren am selben Messpunkt werden in einem Request alle in `sensor_types` eingetragen.
+
 ## [1.1.1] - 2026-10-21
 
 ### Fixed
