@@ -114,7 +114,7 @@ Das System verwendet eine **optimierte Batch-Speicherung mit UUID-Dokumenten**, 
 
 **Reservierte Felder in `values`:** Schlüssel mit führendem `_` werden nicht in die Datenpunkte gespeichert. Schlüssel mit `_q_` beschreiben die Datenqualität: Die API schreibt pro Request und Messpunkt nur den neuesten Stand nach `metering_points/{mp}.data_quality`. Ein Datensatz, der nur `_q_*`-Felder enthält, gilt als Lebenszeichen: Er aktualisiert `last_seen` und `data_quality`, erzeugt aber keinen Datenpunkt. Beispiel: siehe [R&D-Notiz D1](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/docs/rnd-mioty-apollon.md).
 
-**Hinweis:** Es gibt **kein separates Device-Dokument** mehr. Die `last_seen` Information wird direkt in den Messpunkt-Dokumenten gespeichert. Dies reduziert Schreibvorgänge um 78%.
+**Hinweis:** Die API schreibt **kein Device-Dokument**. Die `last_seen` Information wird direkt in den Messpunkt-Dokumenten gespeichert. Dies reduziert Schreibvorgänge um 78%. Folge: `devices/{id}` und die Jahresdokumente (`telemetry/{year}`, `manual/{year}`) existieren sonst nicht und erscheinen in der Firestore-Konsole kursiv (Geister-Dokumente). Für `emon01` und `emon03` wurden Platzhalter-Dokumente (`device_id`, `note`, `created_at`) einmalig von Hand angelegt, damit die Konsole die Unterkollektionen zeigt. Neue Geräte und Jahre brauchen sie ebenfalls, bis die API sie selbst anlegt (siehe Backlog im Docs-Repo).
 
 **Messpunkt-basierte Architektur**: Die Struktur orientiert sich an den **physischen Messpunkten** (E1, E2, I1, K0), nicht an einzelnen Sensoren. Ein Messpunkt kann von mehreren Sensoren gleichzeitig gemessen werden (z.B. victron UND shelly-3em-pro an E1). Die `sensor_types` werden als Array gespeichert, wobei neue Sensor-Typen automatisch hinzugefügt werden.
 
@@ -144,7 +144,7 @@ Das System verwendet eine **optimierte Batch-Speicherung mit UUID-Dokumenten**, 
   - 74% Sicherheitsmarge
 
 - **Write-Optimierung**:
-  - Kein separates Device-Dokument (eliminiert redundante Writes)
+  - Kein Device-Dokument durch die API (eliminiert redundante Writes; Platzhalter nur von Hand, siehe oben)
   - `last_seen` direkt in Sensor-Dokumenten gespeichert
   - Sensor-Metadaten werden gecacht und nur einmal pro Request aktualisiert
   - Batch-Speicherung gruppiert bis zu 2.000 Datenpunkte pro Dokument
@@ -510,7 +510,7 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
 
 ## Cost Optimization & Firestore Usage
 
-Das System verwendet hochoptimierte Batch-Speicherung ohne Device-Dokumente.
+Das System verwendet hochoptimierte Batch-Speicherung ohne von der API geschriebene Device-Dokumente.
 
 ### Annahmen für Kostenberechnung
 
