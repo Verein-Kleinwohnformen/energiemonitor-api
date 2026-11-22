@@ -350,3 +350,14 @@ def test_fire_duration_ends_when_sun_takes_over():
     e3 = [(t, 800.0 if t >= at(DAY, 8) else 0.0) for t in range(s, e, 10_000)]
     f = detect_fires(t_in, None, e3, s - 3 * H, e + 12 * H, s, e)
     assert len(f) == 1 and f[0]['end'] == '08:00' and f[0]['weight'] == pytest.approx(2.0)
+
+
+def test_small_ster_quantities_keep_precision():
+    d0 = date(2026, 1, 1)
+    days = days_info(d0, 30)
+    entries = [Entry(day_bounds(d0)[0], 'woodSter', 'M2', 0, 'Ster'),
+               Entry(day_bounds(d0 + timedelta(days=29))[0], 'woodSter', 'M2', 0.1, 'Ster')]
+    alloc, kwh, _ = allocate(entries, days, days.keys(), {'woodSter': 1627.5})
+    a = alloc[d0 + timedelta(days=3)]['woodSter']
+    assert a['quantity'] == pytest.approx(0.1 / 29, rel=1e-4)
+    assert kwh[d0 + timedelta(days=3)]['woodSter'] == pytest.approx(1627.5 * 0.1 / 29, abs=0.001)

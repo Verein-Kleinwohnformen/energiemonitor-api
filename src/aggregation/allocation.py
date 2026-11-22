@@ -257,6 +257,10 @@ def allocate(entries: List[Entry], days: Dict[date, DayInfo], output_days: Itera
     return alloc, kwh, new_state
 
 
+# Mengen mit 6 Nachkommastellen: bei Ster ist 0.001 schon rund 1.6 kWh.
+QUANTITY_DIGITS = 6
+
+
 def _merge(day_alloc: dict, etype: str, mp: str, a: DayAlloc, unit: str) -> None:
     """Mehrere Messpunkte eines Energieträgers zusammenzählen.
 
@@ -264,7 +268,7 @@ def _merge(day_alloc: dict, etype: str, mp: str, a: DayAlloc, unit: str) -> None
     bekannten Teile; incomplete sagt, dass etwas fehlt. Nur wenn alles
     unbekannt ist, bleibt quantity leer.
     """
-    qty = None if a.quantity is None else round(a.quantity, 3)
+    qty = None if a.quantity is None else round(a.quantity, QUANTITY_DIGITS)
     cur = day_alloc.get(etype)
     if cur is None:
         cur = day_alloc[etype] = {'quantity': None, 'unit': unit, 'method': a.method, 'provisional': False,
@@ -272,7 +276,7 @@ def _merge(day_alloc: dict, etype: str, mp: str, a: DayAlloc, unit: str) -> None
     cur['by_metering_point'][mp] = qty
     cur.setdefault('_provisional', {})[mp] = a.provisional
     known = [m for m, v in cur['by_metering_point'].items() if v is not None]
-    cur['quantity'] = round(sum(cur['by_metering_point'][m] for m in known), 3) if known else None
+    cur['quantity'] = round(sum(cur['by_metering_point'][m] for m in known), QUANTITY_DIGITS) if known else None
     cur['incomplete'] = len(known) < len(cur['by_metering_point'])
     # vorläufig, wenn ein bekannter Teil vorläufig ist (oder alles unbekannt und vorläufig)
     parts = known or list(cur['by_metering_point'])
