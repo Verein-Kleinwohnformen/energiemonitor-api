@@ -39,20 +39,25 @@ energiemonitor-api/
 │   ├── api/
 │   │   ├── routes/
 │   │   │   ├── telemetry.py    # Telemetry ingestion endpoint
-│   │   │   └── export.py       # Data export endpoint
+│   │   │   ├── export.py       # Data export endpoint
+│   │   │   └── aggregate.py    # Tageswerte (Cloud Scheduler)
 │   │   └── models/
 │   │       ├── telemetry.py    # Telemetry data model
 │   │       └── metering_point.py # Metering point model
+│   ├── aggregation/            # Tageswerte: reine Rechenlogik (Strom, Klima, Belegung, Feuer, Brennstoffe)
 │   ├── services/
 │   │   ├── firebase_service.py # Firestore operations
+│   │   ├── aggregation_service.py # Tageswerte lesen, rechnen, schreiben
 │   │   └── export_service.py   # XLSX generation
 │   ├── middleware/
-│   │   └── auth.py             # Device key authentication
+│   │   ├── auth.py             # Device key authentication
+│   │   └── scheduler_auth.py   # OIDC-Token von Cloud Scheduler für /aggregate
 │   ├── utils/
 │   │   └── validators.py       # Data validation
 │   └── config/
 │       └── firebase_config.py  # Configuration
 ├── tests/                       # Unit tests
+├── tools/backfill_daily.py      # Tageswerte für vergangene Tage nachrechnen
 ├── requirements.txt             # Python dependencies
 ├── Dockerfile                   # Container definition
 └── cloudbuild.yaml             # GCP deployment config
@@ -273,6 +278,52 @@ Tab "power-meter":
 - ✅ Spaltenbreiten automatisch angepasst
 - ⚠️ **Maximaler Export-Zeitraum: 31 Tage** (größere Zeiträume werden abgelehnt)
 - ⚠️ Große Datenbereiche können längere Download-Zeiten verursachen
+
+### POST /aggregate (Tageswerte)
+
+Rechnet Tageswerte aus den Rohdaten und schreibt sie nach `/devices/{device_id}/daily/{YYYY-MM-DD}` (Tag in Lokalzeit Europe/Zurich). Die App liest nur diese Dokumente, nie Rohdaten für Auswertungen. Das Format steht im App-Repo unter `docs/konzept/04_datenmodell.md`, Abschnitt "Umsetzung Etappe 2"; der Code in `src/aggregation/` (reine Rechenlogik) und `src/services/aggregation_service.py` (Lesen und Schreiben).
+
+Inhalt pro Tag: Strom pro Messpunkt und Stunde, Verfügbarkeit, Klima (Netatmo als Studienquelle), Belegung aus CO2, erkannte Feuer (Ofensignatur) und die Verteilung von Pellets, Holz und Gas aus den Formulareinträgen auf die Tage.
+
+**Nur für Cloud Scheduler.** Der Aufruf braucht ein OIDC-Token eines Dienstkontos (`Authorization: Bearer …`). Die API prüft Audience und Konto gegen zwei Umgebungsvariablen; fehlt eine, lehnt sie jeden Aufruf ab (503):
+
+| Variable | Inhalt |
+|---|---|
+| `AGGREGATE_AUDIENCE` | URL des Cloud-Run-Dienstes |
+| `AGGREGATE_INVOKERS` | erlaubte Dienstkonten, mit Komma getrennt |
+
+| Parameter | Bedeutung |
+|---|---|
+| `mode=hourly` (Standard) | heute bis jetzt, für alle Geräte |
+| `mode=nightly` | die letzten `days_back` Tage (Standard 3), Brennstoffe neu verteilt |
+| `date=YYYY-MM-DD` oder `from`/`to` | bestimmte Tage (höchstens 31) |
+| `device` | nur ein Gerät |
+
+Kommt ein Formulareintrag dazu, verteilt der nächste stündliche Lauf die Brennstoffe seit dem vorherigen Eintrag neu. Der Stand dafür liegt in `/devices/{device_id}/aggregation/state`.
+
+**Einrichten** (einmalig durch das Team, Projekt-ID und URL einsetzen):
+
+```bash
+gcloud iam service-accounts create energiemonitor-scheduler --project <PROJEKT-ID>
+gcloud run services update energiemonitor-api --region europe-west6 \
+  --update-env-vars AGGREGATE_AUDIENCE=<DIENST-URL>,AGGREGATE_INVOKERS=energiemonitor-scheduler@<PROJEKT-ID>.iam.gserviceaccount.com
+gcloud scheduler jobs create http energiemonitor-daily-hourly --location europe-west6 \
+  --schedule "5 * * * *" --time-zone Europe/Zurich --http-method POST \
+  --uri "<DIENST-URL>/aggregate?mode=hourly" \
+  --oidc-service-account-email energiemonitor-scheduler@<PROJEKT-ID>.iam.gserviceaccount.com --oidc-token-audience <DIENST-URL>
+gcloud scheduler jobs create http energiemonitor-daily-nightly --location europe-west6 \
+  --schedule "30 2 * * *" --time-zone Europe/Zurich --http-method POST \
+  --uri "<DIENST-URL>/aggregate?mode=nightly" \
+  --oidc-service-account-email energiemonitor-scheduler@<PROJEKT-ID>.iam.gserviceaccount.com --oidc-token-audience <DIENST-URL>
+```
+
+**Vergangene Tage nachrechnen** (Backfill, lokal mit `gcloud auth application-default login`; ohne `--apply` nur Probelauf):
+
+```bash
+python tools/backfill_daily.py --project <PROJEKT-ID> --device <GERÄT> --from 2026-04-01 --to 2026-11-30 --apply
+```
+
+Kosten: pro Gerät und Lauf 300 bis 500 gelesene Dokumente (Rohdaten des Tages und des UTC-Vortags, wegen Feuern über Mitternacht) und 1 bis 2 geschriebene. Stündlich und nachts zusammen etwa 10'000 Lesevorgänge pro Gerät und Tag, bei 10 Geräten also über dem Gratiskontingent von 50'000, aber im Bereich von Rappen pro Tag.
 
 ### GET /health
 

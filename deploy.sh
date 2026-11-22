@@ -48,7 +48,7 @@ gcloud run deploy energiemonitor-api \
   --region europe-west6 \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars GCP_PROJECT=$PROJECT_ID \
+  --update-env-vars GCP_PROJECT=$PROJECT_ID \
   --memory 2Gi \
   --cpu 1 \
   --timeout 300 \

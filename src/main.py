@@ -4,6 +4,7 @@ from flask import Flask
 from flask_cors import CORS
 from api.routes.telemetry import telemetry_bp
 from api.routes.export import export_bp
+from api.routes.aggregate import aggregate_bp
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -20,6 +21,7 @@ CORS(app,
 # Register blueprints
 app.register_blueprint(telemetry_bp)
 app.register_blueprint(export_bp)
+app.register_blueprint(aggregate_bp)
 
 @app.route('/health', methods=['GET'])
 def health_check():

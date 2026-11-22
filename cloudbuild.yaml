@@ -22,7 +22,7 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
+      - '--update-env-vars'
       - 'GCP_PROJECT=$PROJECT_ID'
       - '--memory'
       - '2Gi'
