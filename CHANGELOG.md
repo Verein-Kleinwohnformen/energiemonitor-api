@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Datenqualität pro Messpunkt: `_q_*`-Felder in `values` werden nach `metering_points/{mp}.data_quality` geschrieben (nur der neueste Stand, `since` bleibt bei gleichem Status). Alle Felder mit führendem `_` werden nicht in Datenpunkten gespeichert.
 - Datensätze nur mit `_q_*`-Feldern gelten als Lebenszeichen (aktualisieren `last_seen`).
+- Tageswerte (Neukonzept Etappe 2): `POST /aggregate` rechnet pro Gerät und Tag (Lokalzeit Europe/Zurich) Strom pro Messpunkt und Stunde, Verfügbarkeit, Klima, Belegung aus CO2, erkannte Feuer (Ofensignatur) und die Verteilung von Pellets, Holz und Gas aus den Formulareinträgen, und schreibt sie nach `/devices/{id}/daily/{YYYY-MM-DD}`. Nur für Cloud Scheduler (OIDC-Token, `AGGREGATE_AUDIENCE`, `AGGREGATE_INVOKERS`).
+- `tools/backfill_daily.py` zum Nachrechnen vergangener Tage, ohne `--apply` nur Probelauf.
+- Abhängigkeit `tzdata` für Zeitzonen ohne System-Datenbank.
+
+### Changed
+- Deploy-Skripte und Cloud Build setzen `GCP_PROJECT` mit `--update-env-vars`, damit weitere Umgebungsvariablen (z.B. für `/aggregate`) beim Deploy erhalten bleiben.
 
 ### Fixed
 - `value_fields` werden bei jedem Request ergänzt, nicht nur beim Anlegen des Messpunkts. Neue Felder erscheinen so in der App.
