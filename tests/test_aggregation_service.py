@@ -116,6 +116,20 @@ def test_hourly_uses_state_and_new_entry_triggers_realloc(db):
     assert fast_reads < db.reads - reads_before - fast_reads
 
 
+def test_backfill_in_blocks_then_realloc_from_start(db):
+    svc = AggregationService(db)
+    now = day_bounds(date(2026, 4, 26))[0]
+    # Zwei Blöcke, der Zeitraum 20. bis 23. reicht über die Grenze
+    svc.run_device(DEV, [date(2026, 4, 20), date(2026, 4, 21)], now_ms=now, full_realloc=True)
+    svc.run_device(DEV, [date(2026, 4, 22) + timedelta(days=i) for i in range(4)], now_ms=now, full_realloc=True)
+    res = svc.run_device(DEV, [date(2026, 4, 25)], now_ms=now, full_realloc=True, realloc_from=date(2026, 4, 20))
+    assert res['full_realloc'] is True
+    total = sum((daily(db, date(2026, 4, 20) + timedelta(days=i))['manual_alloc']['pellets']['quantity'] or 0)
+                for i in range(3))
+    assert total == pytest.approx(3.0)
+    assert daily(db, date(2026, 4, 21))['manual_alloc']['pellets']['quantity'] == pytest.approx(3.0)
+
+
 def test_dry_run_writes_nothing(db):
     svc = AggregationService(db)
     before = dict(db.store)

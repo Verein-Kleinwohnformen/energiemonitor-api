@@ -125,8 +125,13 @@ class AggregationService:
     # --- Rechnen ---------------------------------------------------------
 
     def run_device(self, device: str, days: List[date], now_ms: Optional[int] = None,
-                   full_realloc: bool = False, dry_run: bool = False) -> dict:
-        """Tageswerte für days rechnen und schreiben. Liefert eine Zusammenfassung."""
+                   full_realloc: bool = False, dry_run: bool = False,
+                   realloc_from: Optional[date] = None) -> dict:
+        """Tageswerte für days rechnen und schreiben. Liefert eine Zusammenfassung.
+
+        realloc_from: Brennstoffe ab diesem Tag neu verteilen (Backfill), sonst
+        ab dem letzten abgeschlossenen Zeitraum, höchstens MAX_REALLOC_DAYS zurück.
+        """
         now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         days = sorted(d for d in set(days) if day_bounds(d)[0] <= now_ms)
         if not days:
@@ -146,10 +151,12 @@ class AggregationService:
         stale = any(not can_use_state(ents, state.get(k), day_infos, days) for k, ents in series.items())
         output_days = list(days)
         existing: Dict[date, dict] = {}
-        if series and (full_realloc or stale):
+        if series and (full_realloc or stale or realloc_from is not None):
             starts = [needed_from(ents) for ents in series.values()]
             first = min(local_date(s) for s in starts if s is not None)
             first = max(min(first, days[0]), days[-1] - timedelta(days=MAX_REALLOC_DAYS))
+            if realloc_from is not None:
+                first = min(first, realloc_from)
             span = date_range(first, days[-1])
             existing = self.load_daily(device, [d for d in span if d not in docs])
             for d in span:

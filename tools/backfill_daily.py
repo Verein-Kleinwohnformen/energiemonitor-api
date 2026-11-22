@@ -50,6 +50,10 @@ def main():
             else:
                 line += f", neu verteilt {res.get('reallocated')}"
             print(line, flush=True)
+        # Zum Schluss alle Brennstoffe über den ganzen Zeitraum neu verteilen,
+        # weil ein Zeitraum zwischen zwei Einträgen über eine Blockgrenze reichen kann.
+        res = svc.run_device(device, [days[-1]], full_realloc=True, dry_run=not args.apply, realloc_from=days[0])
+        print(f"{device} Brennstoffe ab {days[0]} neu verteilt: {res.get('reallocated')} Tage geändert", flush=True)
 
 
 if __name__ == '__main__':
