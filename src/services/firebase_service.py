@@ -6,6 +6,7 @@ from google.cloud import firestore
 from google.cloud import secretmanager
 from api.models.metering_point import MeteringPointMetadata
 from services.batch_buffer import BatchBuffer
+from utils.data_quality import merge_data_quality
 import logging
 
 logger = logging.getLogger(__name__)
@@ -288,38 +289,40 @@ class FirebaseService:
             if not metering_point or not sensor_id:
                 return
             
-            mp_key = f"{device_id}_{metering_point}"
-            
-            # If we've already created/updated this metering point in THIS REQUEST, skip
-            # Cache is only for the current request, not persistent
-            if mp_key in self._metering_point_metadata_cache:
-                return
-            
+            # One update per metering point AND sensor per request. The cache is
+            # cleared after each request.
+            mp_key = f"{device_id}_{metering_point}_{sensor_id}"
+
             mp_ref = self.db.collection(f'devices/{device_id}/metering_points').document(metering_point)
-            
+
             # Use end_timestamp if available (last data point in batch), otherwise current time
             timestamp = data.get('end_timestamp') or data.get('timestamp') or int(datetime.now().timestamp() * 1000)
-            
+
+            # All value fields of this document (union over all data points)
+            value_fields = set(data.get('values', {}).keys()) if 'values' in data else set()
+            for point in data.get('data_points', []):
+                value_fields.update(point.get('values', {}).keys())
+            value_fields = sorted(value_fields)
+
             # Always check if document exists (not relying on persistent cache)
             mp_doc = mp_ref.get()
-            
+
             if mp_doc.exists:
-                # Update existing metering point with last_seen and add sensor_type to array
-                mp_ref.update({
-                    'last_seen': timestamp,
-                    'sensor_types': firestore.ArrayUnion([sensor_id])  # Add sensor_type if not already present
-                })
-                logger.debug(f"Updated metering point metadata for {metering_point} with last_seen={timestamp}, added sensor_type={sensor_id}")
+                # A request can contain several day documents per metering point;
+                # last_seen must be the newest timestamp, never go backwards.
+                existing_last_seen = (mp_doc.to_dict() or {}).get('last_seen') or 0
+                if mp_key in self._metering_point_metadata_cache and timestamp <= existing_last_seen:
+                    return
+                update = {
+                    'last_seen': max(timestamp, existing_last_seen),
+                    'sensor_types': firestore.ArrayUnion([sensor_id]),  # Add sensor_type if not already present
+                }
+                if value_fields:
+                    # New fields (e.g. after a flow update) must appear in the app
+                    update['value_fields'] = firestore.ArrayUnion(value_fields)
+                mp_ref.update(update)
+                logger.debug(f"Updated metering point metadata for {metering_point} with last_seen={update['last_seen']}, added sensor_type={sensor_id}")
             else:
-                # Create new metering point metadata
-                value_fields = list(data.get('values', {}).keys()) if 'values' in data else []
-                
-                # For batch documents, extract fields from first data point
-                if not value_fields and 'data_points' in data and data['data_points']:
-                    first_point = data['data_points'][0]
-                    if 'values' in first_point:
-                        value_fields = list(first_point['values'].keys())
-                
                 mp_metadata = MeteringPointMetadata(
                     metering_point=metering_point,
                     device_id=device_id,
@@ -336,6 +339,41 @@ class FirebaseService:
                 
         except Exception as e:
             logger.warning(f"Failed to update metering point metadata: {e}")
+
+    def update_data_quality(self, device_id: str, metering_point: str, sensor_id: str,
+                            timestamp: int, quality: Dict[str, Any]) -> bool:
+        """
+        Store the data-quality status of a metering point (once per request, not per data point).
+
+        Writes devices/{device_id}/metering_points/{mp}.data_quality and keeps last_seen fresh,
+        so a sensor that only reports "no_valid_data" still counts as online.
+        See utils/data_quality.py for the format.
+        """
+        try:
+            mp_ref = self.db.collection(f'devices/{device_id}/metering_points').document(metering_point)
+            mp_doc = mp_ref.get()
+            existing = (mp_doc.to_dict() or {}) if mp_doc.exists else {}
+
+            merged = merge_data_quality(existing.get('data_quality'), quality, sensor_id, timestamp)
+            if merged is None:
+                return True  # older than the stored status or no status sent
+
+            update = {
+                'metering_point': metering_point,
+                'device_id': device_id,
+                'data_quality': merged,
+                'last_seen': max(timestamp, existing.get('last_seen') or 0),
+                'sensor_types': firestore.ArrayUnion([sensor_id]),
+            }
+            if not mp_doc.exists:
+                update['first_seen'] = timestamp
+                update['value_fields'] = []
+            mp_ref.set(update, merge=True)
+            logger.info(f"Data quality for {device_id}/{metering_point}: {merged['status']} (since {merged['since']})")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to update data quality: {e}")
+            return False
     
 
     

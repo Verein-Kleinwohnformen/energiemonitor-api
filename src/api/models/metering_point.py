@@ -16,7 +16,8 @@ class MeteringPointMetadata:
                  sensor_types: Optional[List[str]] = None,
                  first_seen: Optional[int] = None,
                  last_seen: Optional[int] = None,
-                 value_fields: Optional[List[str]] = None):
+                 value_fields: Optional[List[str]] = None,
+                 data_quality: Optional[Dict] = None):
         """
         Initialize metering point metadata
         
@@ -34,10 +35,12 @@ class MeteringPointMetadata:
         self.first_seen = first_seen or int(datetime.now().timestamp() * 1000)
         self.last_seen = last_seen or int(datetime.now().timestamp() * 1000)
         self.value_fields = value_fields or []
-    
+        # Optional data-quality status, see utils/data_quality.py
+        self.data_quality = data_quality
+
     def to_dict(self) -> Dict:
         """Convert to dictionary for storage"""
-        return {
+        result = {
             'metering_point': self.metering_point,
             'device_id': self.device_id,
             'sensor_types': self.sensor_types,
@@ -45,6 +48,9 @@ class MeteringPointMetadata:
             'last_seen': self.last_seen,
             'value_fields': self.value_fields
         }
+        if self.data_quality:
+            result['data_quality'] = self.data_quality
+        return result
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'MeteringPointMetadata':
@@ -55,5 +61,6 @@ class MeteringPointMetadata:
             sensor_types=data.get('sensor_types', []),
             first_seen=data.get('first_seen'),
             last_seen=data.get('last_seen'),
-            value_fields=data.get('value_fields', [])
+            value_fields=data.get('value_fields', []),
+            data_quality=data.get('data_quality')
         )

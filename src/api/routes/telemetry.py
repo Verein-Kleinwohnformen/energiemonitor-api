@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from middleware.auth import require_device_key
 from services.firebase_service import FirebaseService
 from utils.validators import validate_telemetry_data
+from utils.data_quality import split_reserved_values
 from datetime import datetime
 
 # Configure logging
@@ -63,9 +64,12 @@ def store_telemetry(device_id):
         records = data if isinstance(data, list) else [data]
         
         stored_count = 0
+        quality_only_count = 0
         failed_count = 0
         errors = []
-        
+        # Newest data-quality status per metering point: mp -> (timestamp, sensor_id, quality)
+        quality_updates = {}
+
         for idx, record in enumerate(records):
             # Validate the telemetry data structure
             is_valid, error_message = validate_telemetry_data(record)
@@ -81,7 +85,21 @@ def store_telemetry(device_id):
             if 'timestamp' not in record:
                 record['timestamp'] = int(datetime.now().timestamp() * 1000)
                 logger.debug(f"Device {device_id}: Added server timestamp {record['timestamp']}")
-            
+
+            # Reserved keys (leading "_") are not stored in data points.
+            # "_q_*" keys describe the data quality and go to the metering point document.
+            clean_values, quality = split_reserved_values(record['values'])
+            record['values'] = clean_values
+            if quality:
+                mp = record['metering_point']
+                ts = int(record['timestamp'])
+                if mp not in quality_updates or ts >= quality_updates[mp][0]:
+                    quality_updates[mp] = (ts, record['sensor_id'], quality)
+            if not clean_values:
+                # Quality-only heartbeat: nothing to store as telemetry
+                quality_only_count += 1
+                continue
+
             # Store the data in Firebase
             success, message = firebase_service.store_telemetry(device_id, record)
             
@@ -109,7 +127,15 @@ def store_telemetry(device_id):
                 }), 500
             
             logger.info(f"Device {device_id}: Batch write complete - {write_message}")
-        
+
+        # Write the newest data-quality status once per metering point
+        for mp, (ts, sensor_id, quality) in quality_updates.items():
+            if not firebase_service.update_data_quality(device_id, mp, sensor_id, ts, quality):
+                logger.warning(f"Device {device_id}: Failed to update data quality for {mp}")
+
+        # Quality-only records count as accepted
+        stored_count += quality_only_count
+
         # Return appropriate response
         if stored_count > 0 and failed_count == 0:
             return jsonify({
