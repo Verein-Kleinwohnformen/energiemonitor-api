@@ -351,6 +351,7 @@ Health check endpoint for Cloud Run.
 # API-Schlüssel und URL definieren
 $apiKey = "your-device-api-key"
 $baseUrl = "https://energiemonitor-api-325255315766.europe-west6.run.app"
+$deviceId = "<DEVICE_ID>"
 
 # Telemetriedaten senden
 $headers = @{
