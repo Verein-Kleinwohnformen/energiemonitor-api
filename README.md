@@ -21,6 +21,8 @@ Die vollständige Schritt-für-Schritt-Anleitung steht in der [Doku zu Variante 
 - Exporte schneiden nach **UTC-Tagen**, nicht nach Lokalzeit.
 - XLSX-Dateien können über 30 MB pro Monat gross werden.
 - Die Authentifizierung läuft über den Header `KWF-Device-Key`, ein Schlüssel pro Gerät. Ratenbegrenzung gibt es nicht.
+- Auch `GET /export` nutzt heute den Device-Key. Die App holt ihn aus dem User-Dokument, wer exportieren darf, könnte damit also auch `POST /telemetry` aufrufen. Geplant ist ein Export mit Firebase-ID-Token (siehe [Backlog](https://github.com/Verein-Kleinwohnformen/energiemonitor-docs/blob/main/BACKLOG.md)).
+- `/buffer/stats`, `/buffer/flush` und `/buffer/flush-legacy` sind veraltet und werden entfernt.
 
 ## Architecture
 
