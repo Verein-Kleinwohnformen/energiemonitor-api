@@ -1,6 +1,6 @@
 """Data export endpoint for XLSX downloads"""
 from flask import Blueprint, request, jsonify, send_file
-from middleware.auth import require_device_key
+from middleware.export_auth import require_export_access
 from services.export_service import ExportService
 from datetime import datetime
 
@@ -11,12 +11,16 @@ export_service = ExportService()
 MAX_EXPORT_DAYS = 31
 
 @export_bp.route('/export', methods=['GET'])
-@require_device_key
+@require_export_access
 def export_data(device_id):
     """
     Export telemetry and/or manual data as XLSX file
     
+    Anmeldung: Authorization: Bearer <Firebase-ID-Token> und device_id
+    (siehe middleware/export_auth.py), uebergangsweise KWF-Device-Key.
+
     Query parameters:
+    - device_id: Monitor (nur mit Firebase-Login)
     - start_date: Start date in ISO format (YYYY-MM-DD) or timestamp (ms)
     - end_date: End date in ISO format (YYYY-MM-DD) or timestamp (ms)
     - include_manual: Include manual data (default: true)
@@ -106,5 +110,7 @@ def export_data(device_id):
             download_name=f'energiemonitor_{device_id}_{start_date}_{end_date}.xlsx'
         )
         
-    except Exception as e:
-        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception('Export failed')
+        return jsonify({'error': 'Internal server error'}), 500

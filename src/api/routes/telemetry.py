@@ -164,28 +164,6 @@ def store_telemetry(device_id):
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 
-@telemetry_bp.route('/buffer/stats', methods=['GET'])
-def get_buffer_stats():
-    """
-    Get current buffer statistics (no authentication required for monitoring)
-    
-    NOTE: This endpoint is DEPRECATED as data is now written immediately after each request.
-    The buffer is only used temporarily within a single request and is always empty between requests.
-    
-    Returns information about:
-    - Number of devices with buffered data (should always be 0 between requests)
-    - Number of data points per device/sensor/date
-    - Total data points in buffer
-    """
-    try:
-        stats = firebase_service.get_buffer_stats()
-        stats['note'] = 'DEPRECATED: Buffer is now per-request only and written immediately'
-        return jsonify(stats), 200
-    except Exception as e:
-        logger.exception(f"Error getting buffer stats: {str(e)}")
-        return jsonify({'error': f'Failed to get buffer stats: {str(e)}'}), 500
-
-
 @telemetry_bp.route('/buffer/flush', methods=['POST'])
 @require_device_key
 def flush_buffer(device_id):

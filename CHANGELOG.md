@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `GET /export` mit Firebase-Login: `Authorization: Bearer <ID-Token>` und `device_id`, erlaubt nur Monitore aus `monitor_read`. Der Device-Key geht übergangsweise weiter, abschaltbar mit `EXPORT_ALLOW_DEVICE_KEY=0`.
 - Tageswerte: Shelly 1PM Gen4 (`sensor_id` `shelly-1pm-gen4`, Feld `act_power`) zählt als Stromsensor, z.B. für Warmwasser (I1) am Elektroboiler.
 - Datenqualität pro Messpunkt: `_q_*`-Felder in `values` werden nach `metering_points/{mp}.data_quality` geschrieben (nur der neueste Stand, `since` bleibt bei gleichem Status). Alle Felder mit führendem `_` werden nicht in Datenpunkten gespeichert.
 - Datensätze nur mit `_q_*`-Feldern gelten als Lebenszeichen (aktualisieren `last_seen`).
@@ -16,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Abhängigkeit `tzdata` für Zeitzonen ohne System-Datenbank.
 
 ### Changed
+- Device-Keys werden zeitkonstant verglichen. Fehlerantworten des Exports enthalten keine internen Details mehr.
 - Deploy-Skripte und Cloud Build setzen `GCP_PROJECT` mit `--update-env-vars`, damit weitere Umgebungsvariablen (z.B. für `/aggregate`) beim Deploy erhalten bleiben.
+
+### Removed
+- `GET /buffer/stats` (veraltet, ohne Anmeldung).
 
 ### Fixed
 - `value_fields` werden bei jedem Request ergänzt, nicht nur beim Anlegen des Messpunkts. Neue Felder erscheinen so in der App.

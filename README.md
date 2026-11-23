@@ -216,10 +216,15 @@ Exportiert Telemetriedaten als XLSX-Datei zum Download.
 https://energiemonitor-api-325255315766.europe-west6.run.app
 ```
 
-**Headers:**
-- `KWF-Device-Key`: Device API-Schlüssel (erforderlich)
+**Anmeldung:** mit dem Firebase-Login der App.
+- Header `Authorization: Bearer <Firebase-ID-Token>` (in der App: `FirebaseAuth.instance.currentUser.getIdToken()`)
+- Query-Parameter `device_id`: der Monitor. Die API erlaubt nur Monitore, die im User-Dokument unter `monitor_read` stehen, wie die Firestore-Rules.
+- Das Token muss zum Projekt in `GCP_PROJECT` gehören.
+
+Übergang: Solange die Umgebungsvariable `EXPORT_ALLOW_DEVICE_KEY` nicht `0` ist, geht der Export auch noch mit dem Header `KWF-Device-Key` (Gerät aus dem Schlüssel, `device_id` wird dann ignoriert). Nach dem Deploy der App-Version mit Firebase-Login `EXPORT_ALLOW_DEVICE_KEY=0` setzen.
 
 **Query Parameter:**
+- `device_id`: Monitor (mit Firebase-Login erforderlich)
 - `start_date`: Startdatum (ISO-Format YYYY-MM-DD oder Timestamp in ms)
 - `end_date`: Enddatum (ISO-Format YYYY-MM-DD oder Timestamp in ms)
 
@@ -234,19 +239,19 @@ GET https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_da
 # Mit Timestamp (Millisekunden)
 GET https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=1727740800000&end_date=1730419199999
 
-# Mit PowerShell herunterladen
+# Mit PowerShell herunterladen (ID-Token z. B. aus der Browser-Konsole der angemeldeten App)
 $headers = @{
-    "KWF-Device-Key" = "your-device-api-key"
+    "Authorization" = "Bearer <FIREBASE-ID-TOKEN>"
 }
 
 Invoke-WebRequest `
-    -Uri "https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31" `
+    -Uri "https://energiemonitor-api-325255315766.europe-west6.run.app/export?device_id=<DEVICE_ID>&start_date=2025-10-01&end_date=2025-10-31" `
     -Headers $headers `
     -OutFile "energiemonitor_export.xlsx"
 
 # Mit curl herunterladen
-curl -H "KWF-Device-Key: your-device-api-key" \
-     "https://energiemonitor-api-325255315766.europe-west6.run.app/export?start_date=2025-10-01&end_date=2025-10-31" \
+curl -H "Authorization: Bearer <FIREBASE-ID-TOKEN>" \
+     "https://energiemonitor-api-325255315766.europe-west6.run.app/export?device_id=<DEVICE_ID>&start_date=2025-10-01&end_date=2025-10-31" \
      -o energiemonitor_export.xlsx
 ```
 
@@ -346,6 +351,7 @@ Health check endpoint for Cloud Run.
 # API-Schlüssel und URL definieren
 $apiKey = "your-device-api-key"
 $baseUrl = "https://energiemonitor-api-325255315766.europe-west6.run.app"
+$deviceId = "<DEVICE_ID>"
 
 # Telemetriedaten senden
 $headers = @{
@@ -376,12 +382,14 @@ Write-Host "✓ Daten gesendet: $($response.message)"
 $startDate = "2025-10-01"
 $endDate = "2025-10-31"
 
-$exportUrl = "$baseUrl/export?start_date=$startDate&end_date=$endDate"
+# Export mit dem Firebase-Login der App (ID-Token), nicht mit dem Device-Key
+$idToken = "<FIREBASE-ID-TOKEN>"
+$exportUrl = "$baseUrl/export?device_id=$deviceId&start_date=$startDate&end_date=$endDate"
 
 # XLSX-Datei herunterladen
 Invoke-WebRequest `
     -Uri $exportUrl `
-    -Headers @{"KWF-Device-Key" = $apiKey} `
+    -Headers @{"Authorization" = "Bearer $idToken"} `
     -OutFile "energiemonitor_export_oktober_2025.xlsx"
 
 Write-Host "✓ Export erfolgreich: energiemonitor_export_oktober_2025.xlsx"

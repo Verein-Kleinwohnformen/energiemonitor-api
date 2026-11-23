@@ -73,28 +73,6 @@ try {
     exit 1
 }
 
-# Step 2: Check buffer stats
-Write-Host ""
-Write-Host "[Step 2] Checking buffer stats..." -ForegroundColor Green
-try {
-    $bufferStats = Invoke-RestMethod -Uri "$baseUrl/buffer/stats"
-    Write-Host "  SUCCESS: Buffer stats retrieved" -ForegroundColor Green
-    Write-Host "    Total devices: $($bufferStats.total_devices)" -ForegroundColor Gray
-    
-    if ($bufferStats.devices.$deviceId) {
-        Write-Host "    $deviceId points: $($bufferStats.devices.$deviceId.total_points)" -ForegroundColor Gray
-        
-        foreach ($sensor in $bufferStats.devices.$deviceId.sensors.PSObject.Properties) {
-            Write-Host "      - $($sensor.Name): $($sensor.Value.total_points) points" -ForegroundColor Gray
-        }
-    } else {
-        Write-Host "    No buffered data for $deviceId (may already be flushed)" -ForegroundColor Yellow
-    }
-} catch {
-    Write-Host "  WARNING: Could not retrieve buffer stats" -ForegroundColor Yellow
-    Write-Host "    Error: $_" -ForegroundColor Yellow
-}
-
 # Step 3: Flush buffer to write data to Firestore
 Write-Host ""
 Write-Host "[Step 3] Flushing buffer to Firestore..." -ForegroundColor Green

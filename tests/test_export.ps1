@@ -68,19 +68,6 @@ try {
     exit 1
 }
 
-# Step 2: Check buffer stats
-Write-Host "`n2. Checking buffer stats..."
-try {
-    $bufferStats = Invoke-RestMethod -Uri "$baseUrl/buffer/stats"
-    Write-Host "✓ Buffer stats retrieved"
-    Write-Host "  Total devices: $($bufferStats.total_devices)"
-    if ($bufferStats.devices.testmon00) {
-        Write-Host "  testmon00 points: $($bufferStats.devices.testmon00.total_points)"
-    }
-} catch {
-    Write-Host "⚠ Could not retrieve buffer stats: $_"
-}
-
 # Step 3: Flush buffer to ensure data is written
 Write-Host "`n3. Flushing buffer..."
 try {

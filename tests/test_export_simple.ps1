@@ -55,19 +55,6 @@ try {
     exit 1
 }
 
-# Step 2: Check buffer stats
-Write-Host "`n2. Checking buffer stats..."
-try {
-    $bufferStats = Invoke-RestMethod -Uri "$baseUrl/buffer/stats"
-    Write-Host "[OK] Buffer stats retrieved"
-    Write-Host "  Total devices: $($bufferStats.total_devices)"
-    if ($bufferStats.devices.$deviceId) {
-        Write-Host "  $deviceId points: $($bufferStats.devices.$deviceId.total_points)"
-    }
-} catch {
-    Write-Host "[WARN] Could not retrieve buffer stats: $_"
-}
-
 # Step 3: Flush buffer
 Write-Host "`n3. Flushing buffer..."
 $today = Get-Date -Format "yyyy-MM-dd"
