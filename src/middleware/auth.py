@@ -1,9 +1,19 @@
 """Authentication middleware for device API keys"""
 from functools import wraps
+import hmac
 from flask import request, jsonify
 from services.firebase_service import FirebaseService
 
 firebase_service = FirebaseService()
+
+
+def device_id_for_key(device_key):
+    """Device-ID zum Schluessel aus dem Secret Manager, sonst None (zeitkonstanter Vergleich)."""
+    found = None
+    for dev_id, key in firebase_service.get_device_keys().items():
+        if isinstance(key, str) and hmac.compare_digest(key.encode(), device_key.encode()):
+            found = dev_id
+    return found
 
 def require_device_key(f):
     """
@@ -24,15 +34,7 @@ def require_device_key(f):
                 'message': 'KWF-Device-Key header is required'
             }), 401
         
-        # Load device keys from Secret Manager
-        device_keys = firebase_service.get_device_keys()
-        
-        # Find the device_id for this key
-        device_id = None
-        for dev_id, key in device_keys.items():
-            if key == device_key:
-                device_id = dev_id
-                break
+        device_id = device_id_for_key(device_key)
         
         if not device_id:
             return jsonify({

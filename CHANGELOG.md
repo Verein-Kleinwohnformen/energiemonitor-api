@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `GET /export` mit Firebase-Login: `Authorization: Bearer <ID-Token>` und `device_id`, erlaubt nur Monitore aus `monitor_read`. Der Device-Key geht übergangsweise weiter, abschaltbar mit `EXPORT_ALLOW_DEVICE_KEY=0`.
 - Datenqualität pro Messpunkt: `_q_*`-Felder in `values` werden nach `metering_points/{mp}.data_quality` geschrieben (nur der neueste Stand, `since` bleibt bei gleichem Status). Alle Felder mit führendem `_` werden nicht in Datenpunkten gespeichert.
 - Datensätze nur mit `_q_*`-Feldern gelten als Lebenszeichen (aktualisieren `last_seen`).
 - Tageswerte (Neukonzept Etappe 2): `POST /aggregate` rechnet pro Gerät und Tag (Lokalzeit Europe/Zurich) Strom pro Messpunkt und Stunde, Verfügbarkeit, Klima, Belegung aus CO2, erkannte Feuer (Ofensignatur) und die Verteilung von Pellets, Holz und Gas aus den Formulareinträgen, und schreibt sie nach `/devices/{id}/daily/{YYYY-MM-DD}`. Nur für Cloud Scheduler (OIDC-Token, `AGGREGATE_AUDIENCE`, `AGGREGATE_INVOKERS`).
@@ -15,7 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Abhängigkeit `tzdata` für Zeitzonen ohne System-Datenbank.
 
 ### Changed
+- Device-Keys werden zeitkonstant verglichen. Fehlerantworten des Exports enthalten keine internen Details mehr.
 - Deploy-Skripte und Cloud Build setzen `GCP_PROJECT` mit `--update-env-vars`, damit weitere Umgebungsvariablen (z.B. für `/aggregate`) beim Deploy erhalten bleiben.
+
+### Removed
+- `GET /buffer/stats` (veraltet, ohne Anmeldung).
 
 ### Fixed
 - `value_fields` werden bei jedem Request ergänzt, nicht nur beim Anlegen des Messpunkts. Neue Felder erscheinen so in der App.
