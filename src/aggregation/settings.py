@@ -12,7 +12,8 @@ TIMEZONE = 'Europe/Zurich'
 # Strom: Sensor-Reihenfolge pro Messpunkt und Feld der Leistung in W.
 # TODO(prüfen): A1 wird von shelly-3em-pro und pzem-017 gemessen; gezählt wird
 # der erste Sensor dieser Liste, der am Tag Daten hat.
-POWER_SENSORS = [('victron', 'power'), ('shelly-3em-pro', 'act_power'), ('pzem-017', 'power')]
+POWER_SENSORS = [('victron', 'power'), ('shelly-3em-pro', 'act_power'), ('pzem-017', 'power'),
+                 ('shelly-1pm-gen4', 'act_power')]
 ELECTRIC_MPS = ['E1', 'E2', 'E3', 'A1', 'I1', 'I2', 'I3']
 # Ein Messwert gilt höchstens so lange wie 3 mal der übliche Abstand,
 # mindestens 30 s, höchstens 15 min. Längere Lücken zählen als nicht verfügbar.
