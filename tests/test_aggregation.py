@@ -74,6 +74,16 @@ def test_build_daily_energy_and_feed_in():
     assert len(doc['hourly_kwh']['E3']) == 24
 
 
+def test_build_daily_hot_water_from_shelly_1pm():
+    s, e = day_bounds(DAY)
+    pts = (constant(s, at(DAY, 7), 10_000, 0.0, 'act_power')
+           + constant(at(DAY, 7), at(DAY, 8), 10_000, 1200.0, 'act_power')
+           + constant(at(DAY, 8), e, 10_000, 0.0, 'act_power'))
+    doc = build_daily(DAY, {('I1', 'shelly-1pm-gen4'): pts}, now_ms=e + H, metering_points=['I1'])
+    assert doc['energy_sensor']['I1'] == 'shelly-1pm-gen4'
+    assert doc['energy_kwh']['I1'] == pytest.approx(1.2, abs=0.01)
+
+
 def test_build_daily_today_is_partial():
     s, e = day_bounds(DAY)
     now = at(DAY, 12)

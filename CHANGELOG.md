@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tageswerte: Shelly 1PM Gen4 (`sensor_id` `shelly-1pm-gen4`, Feld `act_power`) zählt als Stromsensor, z.B. für Warmwasser (I1) am Elektroboiler.
 - Datenqualität pro Messpunkt: `_q_*`-Felder in `values` werden nach `metering_points/{mp}.data_quality` geschrieben (nur der neueste Stand, `since` bleibt bei gleichem Status). Alle Felder mit führendem `_` werden nicht in Datenpunkten gespeichert.
 - Datensätze nur mit `_q_*`-Feldern gelten als Lebenszeichen (aktualisieren `last_seen`).
 - Tageswerte (Neukonzept Etappe 2): `POST /aggregate` rechnet pro Gerät und Tag (Lokalzeit Europe/Zurich) Strom pro Messpunkt und Stunde, Verfügbarkeit, Klima, Belegung aus CO2, erkannte Feuer (Ofensignatur) und die Verteilung von Pellets, Holz und Gas aus den Formulareinträgen, und schreibt sie nach `/devices/{id}/daily/{YYYY-MM-DD}`. Nur für Cloud Scheduler (OIDC-Token, `AGGREGATE_AUDIENCE`, `AGGREGATE_INVOKERS`).
