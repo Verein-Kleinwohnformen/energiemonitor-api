@@ -4,24 +4,35 @@ Das Formular liefert pro Eintrag Kaufmenge, Rest und Datum. Daraus kennt man
 den Verbrauch zwischen zwei Einträgen (consumed_quantity des späteren
 Eintrags), nicht wann er stattfand. Konzept: 05_infotexte.md, Abschnitt 2.
 
-Abgeschlossener Zeitraum (zwei Einträge): Die Menge wird nach der ersten
-Methode verteilt, die im Zeitraum ein Gewicht grösser 0 hat:
+Saison statt Einzelzeitraum: Der Rest im Lager ist geschätzt, verlässlich ist
+nur, was gekauft wurde. Darum werden alle abgeschlossenen Zeiträume einer
+Saison zusammengelegt (Saison des späteren Eintrags: Oktober bis März oder
+April bis September, wie in der App). Ihre Summe ist Kauf plus erster Rest
+minus letzter Rest, Fehler der Zwischenstände heben sich auf. Die Summe wird
+über alle Tage vom ersten bis zum letzten Eintrag der Saison verteilt. Jeder
+neue, geänderte oder gelöschte Eintrag verteilt die ganze Saison neu.
+
+Verteilt wird nach der ersten Methode, die über die Saison ein Gewicht
+grösser 0 hat und deren Daten mindestens MIN_METHOD_COVERAGE der Zeit abdecken:
 - Pellets, Holz, Heizöl: Ofensignatur (Feuer gewichtet mit Brenndauer),
   sonst Heizgradtage, sonst gleichmässig.
 - Gas: bewohnte Tage, sonst gleichmässig.
 
-Laufender Zeitraum (nach dem letzten Eintrag): Menge pro Gewicht aus dem
-letzten abgeschlossenen Zeitraum mit Verbrauch, als vorläufig markiert. Gibt
-es keinen, bleibt die Menge offen (None), bei Feuern bleibt die Zahl.
+Laufender Zeitraum (nach dem letzten Eintrag): Menge pro Gewicht aus der
+letzten abgeschlossenen Saison mit Verbrauch, als vorläufig markiert. Gibt
+es keine, bleibt die Menge offen (None), bei Feuern bleibt die Zahl.
 
 Ein Tag, der nur teilweise im Zeitraum liegt, zählt anteilig (Feuer nach
 Startzeit). Diesel und Benzin werden nicht verteilt.
 """
+import hashlib
 from dataclasses import dataclass
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from aggregation.settings import FIRE_FUELS, HDD_BASE_C, HDD_LIMIT_C, METHODS_FIRE, METHODS_OCCUPANCY, OCCUPANCY_FUELS
+from aggregation.series import local_date
+from aggregation.settings import (FIRE_FUELS, HDD_BASE_C, HDD_LIMIT_C, METHODS_FIRE, METHODS_OCCUPANCY,
+                                  MIN_METHOD_COVERAGE, OCCUPANCY_FUELS)
 
 
 @dataclass
@@ -43,12 +54,14 @@ class DayInfo:
     fires: List[Tuple[int, float]]  # (start_ts, weight)
     occupied: Optional[bool]
     t_out_mean: Optional[float]
+    has_t_in: bool = True  # Innentemperatur da, Feuer also erkennbar
 
     @classmethod
     def from_daily(cls, day: date, start: int, end: int, doc: dict) -> 'DayInfo':
         fires = [(int(f['start_ts']), float(f.get('weight') or 0)) for f in (doc.get('fire_events') or [])
                  if f.get('start_ts') is not None]
-        return cls(day, start, end, fires, doc.get('occupied'), (doc.get('climate') or {}).get('t_out_mean'))
+        return cls(day, start, end, fires, doc.get('occupied'), (doc.get('climate') or {}).get('t_out_mean'),
+                   doc.get('fire_source') is not None)
 
 
 def entry_from_doc(doc_id: str, doc: dict) -> Optional[Entry]:
@@ -69,14 +82,60 @@ def entry_from_doc(doc_id: str, doc: dict) -> Optional[Entry]:
     return Entry(int(ts), etype, doc.get('metering_point') or 'M0', consumed, values.get('unit') or '', doc_id)
 
 
-def needed_from(entries: List[Entry]) -> Optional[int]:
-    """Ab wann Tageswerte nötig sind, um den laufenden Zeitraum zu schätzen:
-    Beginn des letzten abgeschlossenen Zeitraums mit Verbrauch."""
+def season_of(ts: int) -> str:
+    """Saison eines Zeitpunkts wie in der App: Heizsaison Oktober bis März
+    (H2026 = Oktober 2026 bis März 2027), Sommer April bis September.
+    TODO(prüfen): Grenzen der Saison mit der HSLU, gleich wie in der App."""
+    d = local_date(ts)
+    if 4 <= d.month <= 9:
+        return f'S{d.year}'
+    return f'H{d.year if d.month >= 10 else d.year - 1}'
+
+
+@dataclass
+class Pool:
+    """Die abgeschlossenen Zeiträume einer Saison, zusammengelegt."""
+    season: str
+    lo: int  # Beginn des ersten Zeitraums
+    hi: int  # letzter Eintrag der Saison
+    quantity: float  # Summe der Verbräuche
+
+
+def pools_of(entries: List[Entry]) -> List[Pool]:
     entries = sorted(entries, key=lambda e: e.ts)
-    for prev, cur in reversed(list(zip(entries, entries[1:]))):
-        if cur.consumed > 0:
-            return prev.ts
-    return entries[-1].ts if entries else None
+    pools: List[Pool] = []
+    for prev, cur in zip(entries, entries[1:]):
+        season = season_of(cur.ts)
+        if pools and pools[-1].season == season:
+            pools[-1].hi = cur.ts
+            pools[-1].quantity += cur.consumed
+        else:
+            pools.append(Pool(season, prev.ts, cur.ts, cur.consumed))
+    return pools
+
+
+def needed_from(entries: List[Entry], since: Optional[int] = None) -> Optional[int]:
+    """Ab wann Tageswerte nötig sind: Beginn der letzten Saison mit Verbrauch
+    (für den laufenden Zeitraum) und jeder Saison, die nach since endet
+    (Ausgabetage darin brauchen die ganze Saison)."""
+    entries = sorted(entries, key=lambda e: e.ts)
+    if not entries:
+        return None
+    pools = pools_of(entries)
+    starts = [entries[-1].ts]
+    with_qty = [p for p in pools if p.quantity > 0]
+    if with_qty:
+        starts.append(with_qty[-1].lo)
+    if since is not None:
+        starts += [p.lo for p in pools if p.hi > since]
+    return min(starts)
+
+
+def fingerprint(entries: List[Entry]) -> str:
+    """Kennung der Einträge einer Reihe. Ändert sich bei neuem, gelöschtem und
+    geändertem Eintrag (die App ändert mit Löschen und neu Speichern)."""
+    parts = sorted(f'{e.ts}:{e.consumed:.6f}:{e.entry_id}' for e in entries)
+    return hashlib.sha1('|'.join(parts).encode()).hexdigest()[:16]
 
 
 def methods_for(energy_type: str) -> Optional[List[str]]:
@@ -118,6 +177,35 @@ def _days_between(days: Dict[date, DayInfo], lo: int, hi: Optional[int]) -> List
     return [d for d in days.values() if d.end > lo and (hi is None or d.start < hi)]
 
 
+def _has_data(method: str, d: DayInfo) -> bool:
+    if method == 'ofensignatur':
+        return d.has_t_in or bool(d.fires)
+    if method == 'heizgradtage':
+        return d.t_out_mean is not None
+    if method == 'bewohnte_tage':
+        return d.occupied is not None
+    return True
+
+
+def coverage(method: str, span: List[DayInfo], lo: int, hi: Optional[int]) -> float:
+    """Anteil der Zeit im Zeitraum, für den eine Methode Daten hat."""
+    fracs = [(d, _overlap(d, lo, hi)) for d in span]
+    total = sum(f for _, f in fracs)
+    return sum(f for d, f in fracs if _has_data(method, d)) / total if total else 0.0
+
+
+def choose_method(methods: List[str], totals: Dict[str, float], span: List[DayInfo], lo: int,
+                  hi: Optional[int]) -> str:
+    """Erste Methode mit Gewicht und genug Daten, sonst die erste mit Gewicht.
+    Fehlt der Klimasensor einen Teil der Saison, landete mit der Ofensignatur
+    sonst alles auf den Tagen mit Sensor.
+    TODO(prüfen): Schwelle MIN_METHOD_COVERAGE."""
+    for m in methods:
+        if totals[m] > 0 and coverage(m, span, lo, hi) >= MIN_METHOD_COVERAGE:
+            return m
+    return next((m for m in methods if totals[m] > 0), methods[-1])
+
+
 @dataclass
 class DayAlloc:
     quantity: Optional[float]
@@ -145,27 +233,30 @@ def allocate_series(entries: List[Entry], days: Dict[date, DayInfo],
 
     rates: Optional[dict] = None
     first_day = min((d.start for d in days.values()), default=None)
-    for prev, cur in zip(entries, entries[1:]):
-        lo, hi = prev.ts, cur.ts
+    for pool in pools_of(entries):
+        lo, hi = pool.lo, pool.hi
         complete = first_day is not None and first_day <= lo
         if not complete and not any(d.end > lo and d.start < hi for d in days.values() if d.day in wanted):
             continue
         span = _days_between(days, lo, hi)
         totals = {m: sum(day_weight(m, d, lo, hi) for d in span) for m in methods}
-        method = next((m for m in methods if totals[m] > 0), methods[-1])
-        if cur.consumed > 0 and complete and any(totals.values()):
-            rates = {'from_ts': lo, 'to_ts': hi, 'quantity': cur.consumed,
-                     'per_weight': {m: cur.consumed / t for m, t in totals.items() if t > 0}}
+        method = choose_method(methods, totals, span, lo, hi)
+        # TODO(prüfen): Ergibt eine Saison weniger als 0 (Rest zu tief geschätzt), zählt 0.
+        quantity = max(0.0, pool.quantity)
+        if quantity > 0 and complete and any(totals.values()):
+            rates = {'from_ts': lo, 'to_ts': hi, 'quantity': quantity, 'season': pool.season,
+                     'per_weight': {m: quantity / t for m, t in totals.items() if t > 0}}
         for d in span:
             if d.day not in wanted:
                 continue
             w = day_weight(method, d, lo, hi)
-            qty = cur.consumed * w / totals[method] if totals[method] > 0 else 0.0
+            qty = quantity * w / totals[method] if totals[method] > 0 else 0.0
             _add(out, d.day, qty, method, False, fires_in(d, lo, hi) if method == 'ofensignatur' else None)
 
     running_from = entries[-1].ts
     running_alloc(out, running_from, methods, rates, days, wanted)
-    return out, {'running_from': running_from, 'rates': rates, 'entry_count': len(entries)}
+    return out, {'running_from': running_from, 'rates': rates, 'entry_count': len(entries),
+                 'fingerprint': fingerprint(entries)}
 
 
 def running_alloc(out: Dict[date, DayAlloc], running_from: int, methods: List[str], rates: Optional[dict],
@@ -199,9 +290,9 @@ def _add(out: Dict[date, DayAlloc], day: date, qty: Optional[float], method: str
 
 
 def can_use_state(ents: List[Entry], st: Optional[dict], days: Dict[date, DayInfo], output_days) -> bool:
-    """Der gespeicherte Stand gilt, wenn seither kein Eintrag dazukam und alle
-    Ausgabetage nach dem letzten Eintrag beginnen."""
-    if not st or st.get('entry_count') != len(ents):
+    """Der gespeicherte Stand gilt, wenn seither kein Eintrag dazukam, keiner
+    geändert oder gelöscht wurde und alle Ausgabetage nach dem letzten Eintrag beginnen."""
+    if not st or st.get('entry_count') != len(ents) or st.get('fingerprint') != fingerprint(ents):
         return False
     last = max(e.ts for e in ents)
     if st.get('running_from') != last:

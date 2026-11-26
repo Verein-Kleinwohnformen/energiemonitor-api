@@ -54,9 +54,12 @@ class ColRef:
     def list_documents(self):
         return [DocRef(self.db, f'{self.path}/{i}') for i in self._children()]
 
+    OPS = {'==': lambda a, b: a == b, '>=': lambda a, b: a is not None and a >= b,
+           '<': lambda a, b: a is not None and a < b}
+
     def where(self, field, op, value):
-        assert op == '=='
-        return ColRef(self.db, self.path, self.filters + ((field, value),))
+        assert op in self.OPS
+        return ColRef(self.db, self.path, self.filters + ((field, op, value),))
 
     def stream(self):
         for i in self._children():
@@ -64,7 +67,7 @@ class ColRef:
             data = self.db.store.get(path)
             if data is None:
                 continue
-            if all(data.get(f) == v for f, v in self.filters):
+            if all(self.OPS[op](data.get(f), v) for f, op, v in self.filters):
                 self.db.reads += 1
                 yield Snap(path, data)
 

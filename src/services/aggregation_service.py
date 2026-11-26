@@ -12,6 +12,7 @@ Ablauf pro Gerät:
 """
 import logging
 import time
+from bisect import bisect_left
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional
 
@@ -25,6 +26,21 @@ NEEDED_MPS = {'E1', 'E2', 'E3', 'A1', 'I1', 'I2', 'I3', 'K0'}
 MAX_DAYS_PER_CALL = 31
 # Neu verteilt werden höchstens so viele Tage zurück.
 MAX_REALLOC_DAYS = 400
+# Ein Telemetrie-Dokument enthält Punkte eines UTC-Tages.
+DOC_SPAN_MAX_MS = 24 * 3600_000
+# So viele aufeinanderfolgende Tage teilen sich eine Abfrage der Rohdaten.
+RAW_BLOCK_DAYS = 7
+
+
+def slice_raw(raw: RawPoints, w0: int, w1: int) -> RawPoints:
+    """Punkte in [w0, w1) aus sortierten Rohdaten."""
+    out: RawPoints = {}
+    for key, pts in raw.items():
+        ts = [p[0] for p in pts]
+        part = pts[bisect_left(ts, w0):bisect_left(ts, w1)]
+        if part:
+            out[key] = part
+    return out
 
 
 def today_local(now_ms: Optional[int] = None) -> date:
@@ -67,33 +83,62 @@ class AggregationService:
     def metering_points(self, device: str) -> List[str]:
         return [ref.id for ref in self.db.collection(f'devices/{device}/metering_points').list_documents()]
 
-    def load_raw(self, device: str, day: date) -> RawPoints:
-        """Rohdaten für einen Tag in Lokalzeit plus Rand (für Feuer über Mitternacht).
+    def load_raw(self, device: str, day: date, now_ms: Optional[int] = None) -> RawPoints:
+        """Rohdaten für einen Tag in Lokalzeit plus Rand (für Feuer über Mitternacht)."""
+        return self.load_raw_window(device, *raw_window(day), now_ms=now_ms)
 
-        Telemetrie liegt nach UTC-Tagen in telemetry/{year}/{month} mit Feld day.
+    def load_raw_window(self, device: str, w0: int, w1: int, now_ms: Optional[int] = None) -> RawPoints:
+        """Rohdaten im Zeitraum [w0, w1).
+
+        Telemetrie liegt nach UTC-Tagen in telemetry/{year}/{month}, ein
+        Dokument pro Anfrage, Sensor und Messpunkt. Gelesen werden nur
+        Dokumente mit end_timestamp ab w0 (Einzelfeld-Index), nicht ganze
+        UTC-Tage: Für heute fällt so der Vortag bis auf den Rand weg. Ein
+        Dokument reicht höchstens über einen UTC-Tag, darum endet es
+        spätestens DOC_SPAN_MAX_MS nach w1. Jedes gelesene Dokument kostet
+        einen Lesevorgang.
         """
-        w0, w1 = raw_window(day)
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+        upper = w1 + DOC_SPAN_MAX_MS
         raw: RawPoints = {}
-        d = datetime.fromtimestamp(w0 / 1000, timezone.utc).date()
-        last = datetime.fromtimestamp(min(w1, int(time.time() * 1000) + 3600_000) / 1000, timezone.utc).date()
-        while d <= last:
-            col = self.db.collection(f'devices/{device}/telemetry/{d.year}/{d.month:02d}')
-            for doc in col.where('day', '==', d.day).stream():
+        m = datetime.fromtimestamp(w0 / 1000, timezone.utc).date().replace(day=1)
+        last = datetime.fromtimestamp(min(w1, now_ms + 3600_000) / 1000, timezone.utc).date()
+        while m <= last:
+            q = self.db.collection(f'devices/{device}/telemetry/{m.year}/{m.month:02d}').where(
+                'end_timestamp', '>=', w0)
+            if upper <= now_ms:
+                q = q.where('end_timestamp', '<', upper)
+            for doc in q.stream():
                 f = doc.to_dict()
                 mp = f.get('metering_point')
-                if mp not in NEEDED_MPS:
-                    continue
-                if f.get('end_timestamp', w1) < w0 or f.get('start_timestamp', w0) >= w1:
+                if mp not in NEEDED_MPS or f.get('start_timestamp', w0) >= w1:
                     continue
                 pts = raw.setdefault((mp, f.get('sensor_id')), [])
                 for p in f.get('data_points') or []:
                     ts = p.get('timestamp')
                     if ts is not None and w0 <= ts < w1:
                         pts.append((ts, p.get('values') or {}))
-            d += timedelta(days=1)
+            m = (m + timedelta(days=32)).replace(day=1)
         for pts in raw.values():
             pts.sort(key=lambda x: x[0])
         return raw
+
+    def load_raw_days(self, device: str, days: List[date], now_ms: int) -> Dict[date, RawPoints]:
+        """Rohdaten für mehrere Tage: aufeinanderfolgende Tage in Blöcken von
+        höchstens RAW_BLOCK_DAYS mit einer Abfrage, dann pro Tag geschnitten.
+        Vorher las jeder Tag für sich zwei bis drei ganze UTC-Tage."""
+        out: Dict[date, RawPoints] = {}
+        blocks: List[List[date]] = []
+        for d in sorted(days):
+            if blocks and (d - blocks[-1][-1]).days == 1 and len(blocks[-1]) < RAW_BLOCK_DAYS:
+                blocks[-1].append(d)
+            else:
+                blocks.append([d])
+        for block in blocks:
+            raw = self.load_raw_window(device, raw_window(block[0])[0], raw_window(block[-1])[1], now_ms)
+            for d in block:
+                out[d] = slice_raw(raw, *raw_window(d))
+        return out
 
     def load_entries(self, device: str) -> List[Entry]:
         entries = []
@@ -137,7 +182,8 @@ class AggregationService:
         if not days:
             return {'device': device, 'days': [], 'written': 0}
         mps = self.metering_points(device)
-        docs = {d: build_daily(d, self.load_raw(device, d), now_ms, mps) for d in days}
+        raw = self.load_raw_days(device, days, now_ms)
+        docs = {d: build_daily(d, raw[d], now_ms, mps) for d in days}
 
         entries = self.load_entries(device)
         heating_values = heating_values_from(self.load_factors()) if entries else {}
@@ -152,7 +198,8 @@ class AggregationService:
         output_days = list(days)
         existing: Dict[date, dict] = {}
         if series and (full_realloc or stale or realloc_from is not None):
-            starts = [needed_from(ents) for ents in series.values()]
+            # Ganze Saisons: auch Saisons, in denen die Ausgabetage liegen.
+            starts = [needed_from(ents, since=day_bounds(days[0])[0]) for ents in series.values()]
             first = min(local_date(s) for s in starts if s is not None)
             first = max(min(first, days[0]), days[-1] - timedelta(days=MAX_REALLOC_DAYS))
             if realloc_from is not None:

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Tageswerte: Pellets, Holz und Gas werden pro Saison verteilt (Oktober bis März, April bis September, Saison des späteren Eintrags). Alle abgeschlossenen Zeiträume einer Saison zählen zusammen, Fehler bei geschätzten Zwischenständen heben sich auf. Ein neuer, geänderter oder gelöschter Eintrag verteilt die ganze Saison neu (Kennung der Einträge im Stand). Eine Methode gilt nur bei mindestens 80 % Datenabdeckung der Saison.
+- Tageswerte lesen Rohdaten über `end_timestamp` statt ganzer UTC-Tage und mehrere Tage mit einer Abfrage: der stündliche Lauf liest rund halb so viele Dokumente.
+- Metadaten der Messpunkte: ein gebündelter Lesevorgang und höchstens ein Schreibvorgang pro Messpunkt und Anfrage (vorher pro Sensor-Dokument, K0 hat drei Sensoren).
+
 ### Added
 - `GET /export` mit Firebase-Login: `Authorization: Bearer <ID-Token>` und `device_id`, erlaubt nur Monitore aus `monitor_read`. Der Device-Key geht übergangsweise weiter, abschaltbar mit `EXPORT_ALLOW_DEVICE_KEY=0`.
 - Tageswerte: Shelly 1PM Gen4 (`sensor_id` `shelly-1pm-gen4`, Feld `act_power`) zählt als Stromsensor, z.B. für Warmwasser (I1) am Elektroboiler.
