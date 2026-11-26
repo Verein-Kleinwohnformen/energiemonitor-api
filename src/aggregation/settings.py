@@ -68,3 +68,6 @@ OCCUPANCY_FUELS = {'propane'}
 # Diesel und Benzin werden nicht auf Tage verteilt (Konzept 2.3).
 METHODS_FIRE = ['ofensignatur', 'heizgradtage', 'gleichmaessig']
 METHODS_OCCUPANCY = ['bewohnte_tage', 'gleichmaessig']
+# Eine Methode gilt für eine Saison nur, wenn ihre Daten (Innentemperatur,
+# Aussentemperatur, Belegung) mindestens diesen Anteil der Zeit abdecken.
+MIN_METHOD_COVERAGE = 0.8

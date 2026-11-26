@@ -111,7 +111,9 @@ def test_hourly_uses_state_and_new_entry_triggers_realloc(db):
     assert res['reallocated'] >= 1
     d24 = daily(db, date(2026, 4, 24))
     assert d24['manual_alloc']['pellets']['provisional'] is False
-    assert d24['manual_alloc']['pellets']['quantity'] == pytest.approx(1.5)
+    # Gleiche Saison: 3.0 + 1.5 kg auf die zwei gleich langen Feuer am 21. und 24.
+    assert d24['manual_alloc']['pellets']['quantity'] == pytest.approx(2.25)
+    assert daily(db, date(2026, 4, 21))['manual_alloc']['pellets']['quantity'] == pytest.approx(2.25)
     assert d24['energy_kwh']['E3'] == pytest.approx(2.0, abs=0.01)  # gemessene Werte unverändert
     assert fast_reads < db.reads - reads_before - fast_reads
 
@@ -199,3 +201,39 @@ def test_aggregate_auth(client, monkeypatch):
     assert client.calls[-1] == ('range', ['demo-haus'], date(2026, 7, 14), date(2026, 7, 14), 3)
     r = client.post('/aggregate?date=14.07.2026', headers={'Authorization': 'Bearer ok-token'})
     assert r.status_code == 400
+
+
+def test_edited_entry_redistributes_on_next_hourly_run(db):
+    """Ändern in der App = löschen und neu speichern, gleiche Anzahl Einträge."""
+    svc = AggregationService(db)
+    today = date(2026, 4, 25)
+    svc.run_device(DEV, [date(2026, 4, 20) + timedelta(days=i) for i in range(5)],
+                   now_ms=day_bounds(today)[0], full_realloc=True)
+    svc.run_device(DEV, [today], now_ms=day_bounds(today)[0] + 2 * H)
+    del db.store[next(p for p in db.store if p.endswith('/data/b'))]
+    put_entry(db, day_bounds(date(2026, 4, 23))[0] + 9 * H, 'pellets', 'M2', 5.0, 'b2')
+    res = svc.run_device(DEV, [today], now_ms=day_bounds(today)[0] + 3 * H)
+    assert res['full_realloc'] is True
+    assert daily(db, date(2026, 4, 21))['manual_alloc']['pellets']['quantity'] == pytest.approx(5.0)
+
+
+def test_hourly_reads_only_the_tail_of_yesterday():
+    """Ein Dokument pro halbe Stunde wie die Geräte: heute um 12 Uhr liest der
+    stündliche Lauf den Rand ab 21 Uhr gestern, nicht den ganzen UTC-Vortag."""
+    db = FakeFirestore()
+    today = date(2026, 11, 25)
+    s = day_bounds(today)[0] - 24 * H
+    now = day_bounds(today)[0] + 12 * H
+    for t0 in range(s, now, H // 2):
+        d = datetime.fromtimestamp(t0 / 1000, timezone.utc).date()
+        pts = [{'timestamp': t, 'values': {'power': 100.0}} for t in range(t0, t0 + H // 2, 60_000)]
+        db.store[f'devices/{DEV}/telemetry/{d.year}/{d.month:02d}/E1-{t0}'] = {
+            'sensor_id': 'victron', 'metering_point': 'E1', 'day': d.day,
+            'start_timestamp': pts[0]['timestamp'], 'end_timestamp': pts[-1]['timestamp'], 'data_points': pts}
+    db.store[f'devices/{DEV}/metering_points/E1'] = {'metering_point': 'E1'}
+    res = AggregationService(db).run_device(DEV, [today], now_ms=now)
+    assert res['written'] == 1
+    assert daily(db, today)['energy_kwh']['E1'] == pytest.approx(1.2, abs=0.01)
+    telemetry_docs = sum(1 for p in db.store if '/telemetry/' in p)
+    # 12 h heute + 3 h Rand = 30 Dokumente (plus eins am Rand), statt aller 72
+    assert db.reads - 1 <= 32 < telemetry_docs  # 1 Lesevorgang für den gespeicherten Stand

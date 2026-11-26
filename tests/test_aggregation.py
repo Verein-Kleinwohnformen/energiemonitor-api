@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import pytest  # noqa: E402
 
-from aggregation.allocation import DayInfo, Entry, allocate, entry_from_doc, needed_from  # noqa: E402
+from aggregation.allocation import DayInfo, Entry, allocate, can_use_state, entry_from_doc, needed_from  # noqa: E402
 from aggregation.climate import occupancy  # noqa: E402
 from aggregation.daily import build_daily  # noqa: E402
 from aggregation.energy import integrate  # noqa: E402
@@ -371,3 +371,64 @@ def test_small_ster_quantities_keep_precision():
     a = alloc[d0 + timedelta(days=3)]['woodSter']
     assert a['quantity'] == pytest.approx(0.1 / 29, rel=1e-4)
     assert kwh[d0 + timedelta(days=3)]['woodSter'] == pytest.approx(1627.5 * 0.1 / 29, abs=0.001)
+
+
+# --- Verteilung über die ganze Saison ------------------------------------
+
+def test_season_pools_intermediate_readings():
+    """Der Zwischenstand am 25. war zu tief geschätzt (0 kg verbraucht, obwohl
+    geheizt wurde). Zählt nur die Summe der Saison: 8 kg auf alle Feuer."""
+    d0 = date(2026, 11, 1)
+    fires = {date(2026, 11, 2): [1.0], date(2026, 11, 3): [1.0], date(2026, 11, 6): [1.0], date(2026, 11, 7): [1.0]}
+    days = days_info(d0, 10, fires=fires)
+    entries = [pellets(at(d0, 9), 0), pellets(at(date(2026, 11, 5), 9), 0), pellets(at(date(2026, 11, 9), 9), 8.0)]
+    alloc, _, state = allocate(entries, days, days.keys())
+    for d in fires:
+        assert alloc[d]['pellets']['quantity'] == pytest.approx(2.0)
+        assert alloc[d]['pellets']['provisional'] is False
+    assert state['M2|pellets']['rates']['season'] == 'H2026'
+    assert state['M2|pellets']['rates']['per_weight']['ofensignatur'] == pytest.approx(2.0)
+
+
+def test_seasons_are_not_mixed():
+    """Ein Eintrag im März schliesst die Heizsaison, der im Mai den Sommer."""
+    d0 = date(2026, 3, 20)
+    fires = {date(2026, 3, 22): [1.0], date(2026, 3, 25): [1.0], date(2026, 4, 10): [1.0]}
+    days = days_info(d0, 50, fires=fires)
+    entries = [pellets(at(d0, 9), 0), pellets(at(date(2026, 3, 28), 9), 10.0), pellets(at(date(2026, 5, 8), 9), 1.0)]
+    alloc, _, _ = allocate(entries, days, days.keys())
+    assert alloc[date(2026, 3, 22)]['pellets']['quantity'] == pytest.approx(5.0)
+    assert alloc[date(2026, 4, 10)]['pellets']['quantity'] == pytest.approx(1.0)
+
+
+def test_season_falls_back_when_climate_sensor_missing_part_of_it():
+    """Innentemperatur nur in der zweiten Hälfte: Ofensignatur deckt zu wenig
+    ab, die Saison wird nach Heizgradtagen verteilt."""
+    d0 = date(2026, 11, 1)
+    t_out = {d0 + timedelta(days=i): 10.0 for i in range(10)}
+    days = days_info(d0, 10, fires={date(2026, 11, 8): [1.0]}, t_out=t_out)
+    for i in range(5):
+        days[d0 + timedelta(days=i)].has_t_in = False
+    entries = [pellets(day_bounds(d0)[0], 0), pellets(day_bounds(d0 + timedelta(days=9))[0], 9.0)]
+    alloc, _, _ = allocate(entries, days, days.keys())
+    assert alloc[d0]['pellets']['method'] == 'heizgradtage'
+    assert alloc[d0]['pellets']['quantity'] == pytest.approx(1.0)
+
+
+def test_needed_from_covers_whole_season_of_output_days():
+    d = date(2026, 11, 1)
+    entries = [pellets(at(d, 9), 0), pellets(at(d + timedelta(days=10), 9), 5),
+               pellets(at(d + timedelta(days=20), 9), 0)]
+    since = day_bounds(d + timedelta(days=15))[0]
+    assert needed_from(entries, since=since) == at(d, 9)
+
+
+def test_changed_entry_invalidates_state():
+    d0 = date(2026, 4, 20)
+    days = days_info(d0, 8, fires={date(2026, 4, 21): [1.0], date(2026, 4, 26): [1.0]})
+    entries = [pellets(at(d0, 9), 0), pellets(at(date(2026, 4, 24), 9), 6.0)]
+    today = date(2026, 4, 27)
+    _, _, state = allocate(entries, days, [today])
+    assert can_use_state(entries, state['M2|pellets'], {today: days[today]}, [today])
+    changed = [entries[0], pellets(at(date(2026, 4, 24), 9), 4.0)]
+    assert not can_use_state(changed, state['M2|pellets'], {today: days[today]}, [today])
